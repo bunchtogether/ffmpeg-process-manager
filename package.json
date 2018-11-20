@@ -1,0 +1,64 @@
+{
+  "name": "ffmpeg-process-manager",
+  "version": "1.0.0",
+  "main": "src/index.js",
+  "repository": "https://github.com/bunchtogether/ffmpeg-process-manager.git",
+  "author": "johnwehr@bunchtogether.com",
+  "scripts": {
+    "build": "rm -rf ./dist; flow-remove-types ./src --out-dir ./dist && flow-copy-source ./src ./dist",
+    "flow-typed": "./node_modules/.bin/flow-typed install --overwrite",
+    "test": "yarn lint && yarn test:js",
+    "test:js": "cross-env NODE_ENV=test jest --forceExit tests",
+    "lint": "npm run lint:js && npm run lint:flow",
+    "lint:js": "eslint -c ./.eslintrc --no-eslintrc --fix .",
+    "lint:flow": "flow --show-all-errors",
+    "coverage": "codecov"
+  },
+  "pre-commit": [
+    "lint",
+    "start-pre-commit",
+    "build",
+    "end-pre-commit"
+  ],
+  "jest": {
+    "coverageDirectory": "./coverage/",
+    "collectCoverage": true,
+    "collectCoverageFrom": [
+      "src/*.js"
+    ],
+    "transform": {
+      "^.+\\.js(?:\\.flow)?$": "jest-flow-transform"
+    }
+  },
+  "devDependencies": {
+    "babel-eslint": "^8.2.6",
+    "codecov": "^3.1.0",
+    "cross-env": "^5.2.0",
+    "documentation": "^8.1.2",
+    "eslint": "^5.9.0",
+    "eslint-config-bunchtogether": "^1.1.6",
+    "eslint-plugin-flowtype": "^3.2.0",
+    "eslint-plugin-flowtype-errors": "^3.6.0",
+    "eslint-plugin-import": "^2.14.0",
+    "eslint-plugin-jest": "^22.0.0",
+    "eslint-plugin-jsx-a11y": "^6.1.2",
+    "eslint-plugin-react": "^7.11.1",
+    "expect": "^23.6.0",
+    "flow-bin": "^0.86.0",
+    "flow-copy-source": "^2.0.2",
+    "flow-remove-types": "^1.2.3",
+    "flow-typed": "^2.5.1",
+    "jest": "^23.6.0",
+    "jest-flow-transform": "^1.0.1",
+    "uuid": "^3.3.2"
+  },
+  "dependencies": {
+    "always-tail": "^0.2.0",
+    "chokidar": "^2.0.4",
+    "farmhash": "^2.1.0",
+    "ffmpeg-static": "^2.4.0",
+    "fs-extra": "^7.0.1",
+    "json-stringify-deterministic": "^1.0.1",
+    "ps-node": "^0.1.6"
+  }
+}
