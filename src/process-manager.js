@@ -15,7 +15,8 @@ class FFMpegProcessManager extends EventEmitter {
   ready: Promise<void>;
   outputPath: string;
   networkUsage: {[string]: {bytesIn: string, bytesOut: string}};
-
+  monitoringProcessNetworkUsage: boolean;
+  
   constructor(options: Object = {}) {
     super();
     if (options.logger) {
@@ -43,10 +44,10 @@ class FFMpegProcessManager extends EventEmitter {
     await fs.ensureDir(this.outputPath);
     const stopMonitoringProcessNetworkUsage = this.monitorProcessNetworkUsage();
     const shutdown = async () => {
-      if(this.monitoringProcessNetworkUsage) {
+      if (this.monitoringProcessNetworkUsage) {
         await stopMonitoringProcessNetworkUsage();
       }
-    }
+    };
     process.on('SIGTERM', shutdown);
     process.on('SIGINT', shutdown);
     process.on('SIGBREAK', shutdown);
@@ -67,18 +68,18 @@ class FFMpegProcessManager extends EventEmitter {
       const now = Date.now();
       const delta = now - lastUpdate;
       lastUpdate = now;
-      data.toString('utf8').trim().split('\n').forEach((row, index) => {
-        const columns = row.split(",");
-        if(columns.length < 3) {
+      data.toString('utf8').trim().split('\n').forEach((row) => {
+        const columns = row.split(',');
+        if (columns.length < 3) {
           return;
         }
-        const pid = columns[0].split(".")[1];
-        if(!pid) {
-          return
+        const pid = columns[0].split('.')[1];
+        if (!pid) {
+          return;
         }
         const bytesIn = Math.round(1000 * parseInt(columns[1], 10) / delta);
         const bytesOut = Math.round(1000 * parseInt(columns[2], 10) / delta);
-        processMap[pid] = {bytesIn, bytesOut};
+        processMap[pid] = { bytesIn, bytesOut };
       });
       this.networkUsage = processMap;
       console.log(JSON.stringify(this.networkUsage, null, 2));
@@ -267,7 +268,7 @@ class FFMpegProcessManager extends EventEmitter {
             logger.info('\t* Process is updating');
           } else {
             logger.warn(`Killing non-updating process ${existingPid} with ID ${id}`);
-            await this.killProcess(id, existingPid);
+            await this.killProcess(existingPid);
           }
         } else {
           logger.warn(`Process ${existingPid} with ID ${id} does not exist`);
