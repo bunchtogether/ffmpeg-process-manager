@@ -14,6 +14,7 @@ class FFMpegProcessManager extends EventEmitter {
   logger: {[string]: (s:string) => void};
   ready: Promise<void>;
   outputPath: string;
+  networkUsage: {[string]: {bytesIn: string, bytesOut: string}};
 
   constructor(options: Object = {}) {
     super();
@@ -25,7 +26,8 @@ class FFMpegProcessManager extends EventEmitter {
         alert: (s) => console.error(s),
         crit: (s) => console.error(s),
         error: (s) => console.error(s),
-        warning: (s) => console.log(s),
+        warn: (s) => console.error(s),
+        warning: (s) => console.error(s),
         notice: (s) => console.log(s),
         info: (s) => console.log(s),
         debug: (s) => console.log(s),
@@ -33,10 +35,69 @@ class FFMpegProcessManager extends EventEmitter {
     }
     this.outputPath = path.resolve(path.join(os.tmpdir(), 'node-ffmpeg-process-manager'));
     this.ready = this.init();
+    this.networkUsage = {};
+    this.monitoringProcessNetworkUsage = false;
   }
 
   async init() {
     await fs.ensureDir(this.outputPath);
+    const stopMonitoringProcessNetworkUsage = this.monitorProcessNetworkUsage();
+    const shutdown = async () => {
+      if(this.monitoringProcessNetworkUsage) {
+        await stopMonitoringProcessNetworkUsage();
+      }
+    }
+    process.on('SIGTERM', shutdown);
+    process.on('SIGINT', shutdown);
+    process.on('SIGBREAK', shutdown);
+    process.on('SIGHUP', shutdown);
+  }
+
+  monitorProcessNetworkUsage() {
+    this.monitoringProcessNetworkUsage = true;
+    const { logger } = this;
+    const networkUsageProcess = spawn('nettop', ['-s', '1', '-L', '0', '-P', '-d', '-x', '-J', 'bytes_in,bytes_out', '-t', 'external'], {
+      windowsHide: true,
+      shell: true,
+      detached: true,
+    });
+    let lastUpdate = Date.now();
+    networkUsageProcess.stdout.on('data', (data) => {
+      const processMap = {};
+      const now = Date.now();
+      const delta = now - lastUpdate;
+      lastUpdate = now;
+      data.toString('utf8').trim().split('\n').forEach((row, index) => {
+        const columns = row.split(",");
+        if(columns.length < 3) {
+          return;
+        }
+        const pid = columns[0].split(".")[1];
+        if(!pid) {
+          return
+        }
+        const bytesIn = Math.round(1000 * parseInt(columns[1], 10) / delta);
+        const bytesOut = Math.round(1000 * parseInt(columns[2], 10) / delta);
+        processMap[pid] = {bytesIn, bytesOut};
+      });
+      this.networkUsage = processMap;
+      console.log(JSON.stringify(this.networkUsage, null, 2));
+    });
+    networkUsageProcess.stderr.on('data', (data) => {
+      data.toString('utf8').trim().split('\n').forEach((line) => logger.error(line.trim()));
+    });
+    networkUsageProcess.once('error', async (error) => {
+      logger.error(error.message);
+    });
+    networkUsageProcess.once('close', async (code) => {
+      if (code && code !== 0) {
+        logger.error(`Network usage process monitor exited with error code ${code}`);
+      }
+    });
+    return async () => {
+      this.killProcess(networkUsageProcess.pid);
+      this.monitoringProcessNetworkUsage = false;
+    };
   }
 
   checkIfProcessExists(pid:number): Promise<boolean> {
@@ -53,7 +114,7 @@ class FFMpegProcessManager extends EventEmitter {
     });
   }
 
-  async killProcess(id:string, pid:number) {
+  async killProcess(pid:number) {
     const { logger } = this;
     const exitPromise = new Promise(async (resolve, reject) => {
       for (let i = 0; i < 20; i += 1) {
@@ -64,25 +125,25 @@ class FFMpegProcessManager extends EventEmitter {
         }
         await new Promise((r) => setTimeout(r, 1000));
       }
-      logger.error(`Timeout when stopping process ${pid} with ID ${id}`);
-      reject(new Error(`FFMpegProcessManager timed out when stopping process ${pid} with ID ${id}`));
+      logger.error(`Timeout when stopping process ${pid}`);
+      reject(new Error(`FFMpegProcessManager timed out when stopping process ${pid}`));
     });
-    logger.info(`Sending SIGTERM to ${pid} with ID ${id}`);
+    logger.info(`Sending SIGTERM to process ${pid}`);
     try {
       process.kill(pid, 'SIGTERM');
     } catch (error) {
-      logger.error(`Error with SIGTERM signal on process ${pid} with ID ${id}: ${error.message}`);
+      logger.error(`Error with SIGTERM signal on process ${pid}: ${error.message}`);
     }
     const sigkillTimeout = setTimeout(async () => {
       const processExists = await this.checkIfProcessExists(pid);
       if (!processExists) {
         return;
       }
-      logger.info(`Sending SIGKILL to ${pid} with ID ${id}`);
+      logger.info(`Sending SIGKILL to process ${pid}`);
       try {
         process.kill(pid, 'SIGKILL');
       } catch (error) {
-        logger.error(`Error with SIGKILL signal on process ${pid} with ID ${id}: ${error.message}`);
+        logger.error(`Error with SIGKILL signal on process ${pid}: ${error.message}`);
       }
     }, 10000);
     const sigquitTimeout = setTimeout(async () => {
@@ -90,17 +151,17 @@ class FFMpegProcessManager extends EventEmitter {
       if (!processExists) {
         return;
       }
-      logger.info(`Sending SIGQUIT to ${pid} with ID ${id}`);
+      logger.info(`Sending SIGQUIT to ${pid}`);
       try {
         process.kill(pid, 'SIGQUIT');
       } catch (error) {
-        logger.error(`Error with SIGQUIT signal on process ${pid} with ID ${id}: ${error.message}`);
+        logger.error(`Error with SIGQUIT signal on process ${pid}: ${error.message}`);
       }
     }, 15000);
     await exitPromise;
     clearTimeout(sigkillTimeout);
     clearTimeout(sigquitTimeout);
-    logger.info(`Stopped process ${pid} with ID ${id}`);
+    logger.info(`Stopped process ${pid}`);
   }
 
   getId(args:Array<string>) {
@@ -113,6 +174,7 @@ class FFMpegProcessManager extends EventEmitter {
       const watcher = fs.watch(progressOutputPath, async (event) => {
         if (event === 'change') {
           clearTimeout(timeout);
+          watcher.close();
           resolve(true);
         }
       });
@@ -127,7 +189,6 @@ class FFMpegProcessManager extends EventEmitter {
     await fs.ensureFile(progressOutputPath);
     const fd = await fs.open(progressOutputPath, 'r');
     let lastSize = (await fs.fstat(fd)).size;
-    console.log({ lastSize });
     const watcher = fs.watch(progressOutputPath, async (event) => {
       if (event === 'change') {
         const stat = await fs.fstat(fd);
@@ -156,7 +217,12 @@ class FFMpegProcessManager extends EventEmitter {
   startProcess(id:string, args:Array<string>, progressOutputPath: string):number {
     const { logger } = this;
     const combinedArgs = ['-v', 'quiet', '-nostats', '-progress', `"${progressOutputPath}"`].concat(args);
-    const mainProcess = spawn(`"${ffmpegPath}"`, combinedArgs, {
+    // const mainProcess = spawn(`"${ffmpegPath}"`, combinedArgs, {
+    //  windowsHide: true,
+    //  shell: true,
+    //  detached: true,
+    // });
+    const mainProcess = spawn('ping', ['localhost'], {
       windowsHide: true,
       shell: true,
       detached: true,
@@ -171,7 +237,7 @@ class FFMpegProcessManager extends EventEmitter {
       logger.error(error.message);
     });
     mainProcess.once('close', async (code) => {
-      if (code !== 0 && code !== 255) {
+      if (code && code !== 255) {
         logger.error(`Process ${mainProcess.pid} with ID ${id} exited with error code ${code}`);
       }
     });
@@ -214,7 +280,7 @@ class FFMpegProcessManager extends EventEmitter {
     const stopWatching = await this.startWatching(id, progressOutputPath);
     return async () => {
       await stopWatching();
-      await this.killProcess(id, pid);
+      await this.killProcess(pid);
       await fs.remove(progressOutputPath);
       await fs.remove(pidPath);
     };

@@ -53,8 +53,6 @@
     "uuid": "^3.3.2"
   },
   "dependencies": {
-    "always-tail": "^0.2.0",
-    "chokidar": "^2.0.4",
     "farmhash": "^2.1.0",
     "ffmpeg-static": "^2.4.0",
     "fs-extra": "^7.0.1",
