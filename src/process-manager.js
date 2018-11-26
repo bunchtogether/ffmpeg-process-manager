@@ -15,8 +15,10 @@ class FFMpegProcessManager extends EventEmitter {
   ready: Promise<void>;
   outputPath: string;
   networkUsage: {[string]: {bytesIn: string, bytesOut: string}};
+  ffmpegProgress: {[string]: Object};
   monitoringProcessNetworkUsage: boolean;
-  
+  interval: IntervalID;
+
   constructor(options: Object = {}) {
     super();
     if (options.logger) {
@@ -37,7 +39,9 @@ class FFMpegProcessManager extends EventEmitter {
     this.outputPath = path.resolve(path.join(os.tmpdir(), 'node-ffmpeg-process-manager'));
     this.ready = this.init();
     this.networkUsage = {};
+    this.ffmpegProgress = {};
     this.monitoringProcessNetworkUsage = false;
+    this.interval = setInterval(() => this.emitProcessStatistics(), 10000);
   }
 
   async init() {
@@ -47,6 +51,7 @@ class FFMpegProcessManager extends EventEmitter {
       if (this.monitoringProcessNetworkUsage) {
         await stopMonitoringProcessNetworkUsage();
       }
+      clearInterval(this.interval);
     };
     process.on('SIGTERM', shutdown);
     process.on('SIGINT', shutdown);
@@ -54,10 +59,14 @@ class FFMpegProcessManager extends EventEmitter {
     process.on('SIGHUP', shutdown);
   }
 
+  emitProcessStatistics() {
+
+  }
+
   monitorProcessNetworkUsage() {
     this.monitoringProcessNetworkUsage = true;
     const { logger } = this;
-    const networkUsageProcess = spawn('nettop', ['-s', '1', '-L', '0', '-P', '-d', '-x', '-J', 'bytes_in,bytes_out', '-t', 'external'], {
+    const networkUsageProcess = spawn('nettop', ['-L', '0', '-P', '-d', '-x', '-J', 'bytes_in,bytes_out', '-t', 'external'], {
       windowsHide: true,
       shell: true,
       detached: true,
@@ -218,12 +227,7 @@ class FFMpegProcessManager extends EventEmitter {
   startProcess(id:string, args:Array<string>, progressOutputPath: string):number {
     const { logger } = this;
     const combinedArgs = ['-v', 'quiet', '-nostats', '-progress', `"${progressOutputPath}"`].concat(args);
-    // const mainProcess = spawn(`"${ffmpegPath}"`, combinedArgs, {
-    //  windowsHide: true,
-    //  shell: true,
-    //  detached: true,
-    // });
-    const mainProcess = spawn('ping', ['localhost'], {
+    const mainProcess = spawn(`"${ffmpegPath}"`, combinedArgs, {
       windowsHide: true,
       shell: true,
       detached: true,
@@ -279,12 +283,12 @@ class FFMpegProcessManager extends EventEmitter {
     logger.info(`Writing PID ${pid.toString(10)} to ${pidPath}`);
     await fs.writeFile(pidPath, pid.toString(10));
     const stopWatching = await this.startWatching(id, progressOutputPath);
-    return async () => {
+    return [id, async () => {
       await stopWatching();
       await this.killProcess(pid);
       await fs.remove(progressOutputPath);
       await fs.remove(pidPath);
-    };
+    }];
   }
 }
 
