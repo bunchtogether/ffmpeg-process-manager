@@ -18,7 +18,7 @@ type OptionsType = {
 
 type StartOptionsType = {
   skipInit?: boolean,
-  keepAlive?: boolean
+  skipRestart?: boolean
 };
 
 class FFMpegProcessManager extends EventEmitter {
@@ -31,7 +31,7 @@ class FFMpegProcessManager extends EventEmitter {
   interval: IntervalID;
   updateIntervalSeconds: number;
   pids: Map<number, string>;
-  keepAliveAttempts: {[string]: number};
+  keepAlive: {[string]: { attempt: number, args:Array<string> }};
   isShuttingDown: boolean;
   id: number;
 
@@ -41,7 +41,7 @@ class FFMpegProcessManager extends EventEmitter {
     this.outputPath = path.resolve(path.join(os.tmpdir(), 'node-ffmpeg-process-manager'));
     this.networkUsage = new Map();
     this.progress = new Map();
-    this.keepAliveAttempts = {};
+    this.keepAlive = {};
     this.updateIntervalSeconds = options.updateIntervalSeconds || 10;
     this.pids = new Map();
     this.isShuttingDown = false;
@@ -193,6 +193,8 @@ class FFMpegProcessManager extends EventEmitter {
     networkUsageProcess.once('close', async (code) => {
       if (code && code !== 0) {
         logger.error(`Network usage process monitor exited with error code ${code}`);
+        await new Promise((resolve) => setTimeout(resolve, 10000));
+        this.monitorProcessNetworkUsage();
       }
     });
     this.networkUsageProcess = networkUsageProcess;
@@ -326,9 +328,40 @@ class FFMpegProcessManager extends EventEmitter {
       }
     });
     return async () => {
-      await fs.close(fd);
+      try {
+        await fs.close(fd);
+      } catch (error) {
+        logger.error(`Unable to closed watched progress output file ${progressOutputPath} for ffmpeg process with ID ${id}: ${error.message}`);
+      }
       watcher.close();
     };
+  }
+
+  async restart(id:string) {
+    const keepAliveData = this.keepAlive[id];
+    if (!keepAliveData) {
+      return;
+    }
+    const { attempt, args } = keepAliveData;
+    this.keepAlive[id] = { attempt: attempt + 1, args };
+    if (attempt < 6) {
+      await new Promise((resolve) => setTimeout(resolve, 1000 * attempt * attempt));
+    } else {
+      await new Promise((resolve) => setTimeout(resolve, 1000 * 36));
+    }
+    await this.start(args);
+    logger.warn(`Restarted process with ID ${id}`);
+  }
+
+  async startMonitoringProcess(id:string, pid: number) {
+    while (true) {
+      await new Promise((resolve) => setTimeout(resolve, this.updateIntervalSeconds * 1000));
+      const processExists = await this.checkIfProcessExists(pid);
+      if (!processExists) {
+        this.restart(id);
+        return;
+      }
+    }
   }
 
   startProcess(id:string, args:Array<string>, progressOutputPath: string):child_process$ChildProcess { // eslint-disable-line camelcase
@@ -350,6 +383,7 @@ class FFMpegProcessManager extends EventEmitter {
     mainProcess.once('close', async (code) => {
       if (code && code !== 255) {
         logger.error(`Process ${mainProcess.pid} with ID ${id} exited with error code ${code}`);
+        this.restart(id);
       }
     });
     logger.info(`Started process ${mainProcess.pid} with ID ${id}`);
@@ -358,6 +392,9 @@ class FFMpegProcessManager extends EventEmitter {
 
   async start(args:Array<string>, options?:StartOptionsType = {}) {
     const id = this.getId(args);
+    if (!options.skipRestart) {
+      this.keepAlive[id] = this.keepAlive[id] || { attempt: 0, args };
+    }
     if (!options.skipInit) {
       await this.init();
     }
@@ -378,15 +415,14 @@ class FFMpegProcessManager extends EventEmitter {
       }
     }
     const progressOutputPath = this.getProgressOutputPath(args);
+    if (existingPid && processIsUpdating) {
+      this.startMonitoringProcess(id, existingPid);
+    }
     const pid = existingPid && processIsUpdating ? existingPid : (this.startProcess(id, args, progressOutputPath)).pid;
     this.pids.set(pid, id);
     const stopWatchingProgressOutput = await this.startWatchingProgressOutput(id, progressOutputPath);
     const handler = async (closedProcessId:string) => {
       if (closedProcessId !== id) {
-        return;
-      }
-      if (options.keepAlive) {
-        this.start(args);
         return;
       }
       await stopWatchingProgressOutput();
@@ -398,6 +434,7 @@ class FFMpegProcessManager extends EventEmitter {
   }
 
   async stop(id:string) {
+    delete this.keepAlive[id];
     const processesBeforeClose = await this.getFFMpegProcesses();
     const killPromises = [];
     for (const [ffmpegProcessId, ffmpegArgs] of processesBeforeClose) {

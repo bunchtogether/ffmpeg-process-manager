@@ -89,16 +89,53 @@ describe('FFMpeg Process Manager Process Management', () => {
     });
     const closeAPromise = waitForCloseA(ffmpegJobId);
     const closeBPromise = waitForCloseB(ffmpegJobId);
-    await processManagerA.stop(ffmpegJobId);
+    // Explicitly stop on both promise managers to avoid automatic restarts
+    await Promise.all([processManagerA.stop(ffmpegJobId), processManagerB.stop(ffmpegJobId)]);
     await Promise.all([closeAPromise, closeBPromise]);
     await processManagerA.shutdown();
     await processManagerB.shutdown();
   });
-  // test('Should restart a stopped process', async () => {
-  //  const processManager = new FFMpegProcessManager({ updateIntervalSeconds: 1 });
-  //  const args = ['-i', 'https://nhkwtvglobal-i.akamaihd.net/hls/live/263941/nhkwtvglobal/index_1180.m3u8', '-c', 'copy', '-f', 'mpegts', 'udp://127.0.0.1:48550?pkt_size=1316&burst_bits=13160&reuse=1'];
-  //  const [ffmpegJobId, ffmpegJobPid, stopFFMpegJob] = await processManagerA.start(args); // eslint-disable-line no-unused-vars
-  //  await stopFFMpegJob();
-  //  await processManager.shutdown();
-  // });
+  test.skip('Should restart a stopped process', async () => {
+    const processManager = new FFMpegProcessManager({ updateIntervalSeconds: 1 });
+    const waitForClose = (id) => new Promise((resolve, reject) => {
+      const timeout = setTimeout(() => {
+        reject(new Error('Timeout on close of managed FFMpeg process'));
+      }, 30000);
+      const handleClose = (closedId:string) => {
+        if (closedId === id) {
+          clearTimeout(timeout);
+          processManager.removeListener('close', handleClose);
+          processManager.removeListener('error', reject);
+          resolve();
+        }
+      };
+      processManager.on('close', handleClose);
+      processManager.once('error', reject);
+    });
+    const waitForStatus = (id) => new Promise((resolve, reject) => {
+      const timeout = setTimeout(() => {
+        reject(new Error('Timeout on status of managed FFMpeg process'));
+      }, 30000);
+      const handleStatus = (statusId:string) => {
+        if (statusId === id) {
+          clearTimeout(timeout);
+          processManager.removeListener('status', handleStatus);
+          processManager.removeListener('error', reject);
+          resolve();
+        }
+      };
+      processManager.on('status', handleStatus);
+      processManager.once('error', reject);
+    });
+    const args = ['-i', 'https://nhkwtvglobal-i.akamaihd.net/hls/live/263941/nhkwtvglobal/index_1180.m3u8', '-c', 'copy', '-f', 'mpegts', 'udp://127.0.0.1:48550?pkt_size=1316&burst_bits=13160&reuse=1'];
+    const [ffmpegJobId, ffmpegJobPid] = await processManager.start(args); // eslint-disable-line no-unused-vars
+    await waitForStatus(ffmpegJobId);
+    await new Promise((resolve) => setTimeout(resolve, 45000));
+    process.kill(ffmpegJobPid, 'SIGTERM');
+    await waitForClose(ffmpegJobId);
+    await waitForStatus(ffmpegJobId);
+    await processManager.stop(ffmpegJobId);
+    await waitForClose(ffmpegJobId);
+    await processManager.shutdown();
+  });
 });

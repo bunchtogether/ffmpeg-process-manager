@@ -29,7 +29,7 @@ describe('FFMpeg Process Manager Data Output', () => {
   });
 
   beforeAll(async () => {
-    const [id] = await processManager.start(['-y', '-f', 'lavfi', '-i', 'testsrc=duration=10:size=1280x720:rate=30', testFilePath]);
+    const [id] = await processManager.start(['-y', '-f', 'lavfi', '-i', 'testsrc=duration=10:size=1280x720:rate=30', testFilePath], { skipRestart: true });
     await waitForClose(id);
   });
 
@@ -61,7 +61,7 @@ describe('FFMpeg Process Manager Data Output', () => {
   test('Should get managed FFMpeg processes', async () => {
     const testFilePathHalfSize = path.resolve(__dirname, 'test-half-size.mp4');
     const ffmpegProcessArgs = ['-y', '-i', testFilePath, '-vf', 'scale=iw/2:ih/2', testFilePathHalfSize];
-    const [ffmpegJobId, ffmpegProcessId] = await processManager.start(ffmpegProcessArgs);
+    const [ffmpegJobId, ffmpegProcessId] = await processManager.start(ffmpegProcessArgs, { skipRestart: true });
     const processes = await processManager.getFFMpegProcesses();
     expect(processes.size).toEqual(1);
     for (const [pid, args] of processes) {
@@ -74,7 +74,7 @@ describe('FFMpeg Process Manager Data Output', () => {
 
   test('Should get a FFMpeg process’s CPU and memory usage', async () => {
     const testFilePathHalfSize = path.resolve(__dirname, 'test-half-size.mp4');
-    const [ffmpegJobId, ffmpegProcessId] = await processManager.start(['-y', '-i', testFilePath, '-vf', 'scale=iw/2:ih/2', testFilePathHalfSize]);
+    const [ffmpegJobId, ffmpegProcessId] = await processManager.start(['-y', '-i', testFilePath, '-vf', 'scale=iw/2:ih/2', testFilePathHalfSize], { skipRestart: true });
     const cpuAndMemoryUsage = await processManager.getCpuAndMemoryUsage([...processManager.pids.keys()]);
     expect(cpuAndMemoryUsage.size).toEqual(1);
     for (const [pid, values] of cpuAndMemoryUsage) {
@@ -90,7 +90,7 @@ describe('FFMpeg Process Manager Data Output', () => {
 
   test('Should get a FFMpeg process’s progress', async () => {
     const testFilePathHalfSize = path.resolve(__dirname, 'test-half-size.mp4');
-    const [ffmpegJobId] = await processManager.start(['-y', '-i', testFilePath, '-vf', 'scale=iw/2:ih/2', testFilePathHalfSize]);
+    const [ffmpegJobId] = await processManager.start(['-y', '-i', testFilePath, '-vf', 'scale=iw/2:ih/2', testFilePathHalfSize], { skipRestart: true });
     const progress = await new Promise((resolve, reject) => {
       const timeout = setTimeout(() => {
         reject(new Error('Timeout for FFMpeg process’s progress'));
@@ -115,7 +115,7 @@ describe('FFMpeg Process Manager Data Output', () => {
 
   test('Should get a FFMpeg process’s full status', async () => {
     const testFilePathHalfSize = path.resolve(__dirname, 'test-half-size.mp4');
-    const [ffmpegJobId] = await processManager.start(['-y', '-i', testFilePath, '-vf', 'scale=iw/2:ih/2', testFilePathHalfSize]);
+    const [ffmpegJobId] = await processManager.start(['-y', '-i', testFilePath, '-vf', 'scale=iw/2:ih/2', testFilePathHalfSize], { skipRestart: true });
     const status = await new Promise((resolve, reject) => {
       const timeout = setTimeout(() => {
         reject(new Error('Timeout for FFMpeg process’s status'));
