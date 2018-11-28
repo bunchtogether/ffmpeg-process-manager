@@ -1,7 +1,7 @@
 // @flow
 
 const expect = require('expect');
-const FFMpegProcessManager = require('../src/process-manager');
+const { FFMpegProcessManager } = require('../src');
 const { waitForClose, waitForStatus } = require('./lib/events');
 
 jest.setTimeout(60000);

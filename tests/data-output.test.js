@@ -1,7 +1,7 @@
 // @flow
 
 const expect = require('expect');
-const FFMpegProcessManager = require('../src/process-manager');
+const { FFMpegProcessManager } = require('../src');
 
 jest.setTimeout(60000);
 
@@ -23,7 +23,6 @@ describe('FFMpeg Process Manager Data Output', () => {
         resolve(data);
       });
       processManager.once('error', reject);
-      processManager.init();
     });
     expect(networkUsage.size).toBeGreaterThan(0);
     for (const [pid, values] of networkUsage) {
@@ -111,5 +110,26 @@ describe('FFMpeg Process Manager Data Output', () => {
       speed: expect.any(Number),
     });
     await processManager.stop(ffmpegJobId);
+  });
+
+  test('Should restart the network usage process if it stops', async () => {
+    let networkUsage = await new Promise((resolve, reject) => {
+      processManager.once('networkUsage', (data) => {
+        processManager.removeListener('error', reject);
+        resolve(data);
+      });
+      processManager.once('error', reject);
+    });
+    expect(networkUsage.size).toBeGreaterThan(0);
+    process.kill(processManager.networkUsageProcess.pid, 'SIGTERM');
+    await new Promise((resolve) => setTimeout(resolve, 1000));
+    networkUsage = await new Promise((resolve, reject) => {
+      processManager.once('networkUsage', (data) => {
+        processManager.removeListener('error', reject);
+        resolve(data);
+      });
+      processManager.once('error', reject);
+    });
+    expect(networkUsage.size).toBeGreaterThan(0);
   });
 });

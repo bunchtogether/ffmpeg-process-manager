@@ -157,7 +157,7 @@ class FFMpegProcessManager extends EventEmitter {
     });
   }
 
-  monitorProcessNetworkUsage():Promise<void> {
+  monitorProcessNetworkUsage() {
     const networkUsageProcess = spawn('unbuffer', ['nettop', '-s', this.updateIntervalSeconds.toString(), '-L', '0', '-P', '-d', '-x', '-J', 'bytes_in,bytes_out', '-t', 'external'], {
       windowsHide: true,
       shell: true,
@@ -193,12 +193,14 @@ class FFMpegProcessManager extends EventEmitter {
     networkUsageProcess.once('close', async (code) => {
       if (code && code !== 0) {
         logger.error(`Network usage process monitor exited with error code ${code}`);
-        await new Promise((resolve) => setTimeout(resolve, 10000));
+      }
+      if (!this.isShuttingDown) {
+        logger.error('Restarting network usage process');
+        await new Promise((resolve) => setTimeout(resolve, 1000));
         this.monitorProcessNetworkUsage();
       }
     });
     this.networkUsageProcess = networkUsageProcess;
-    return new Promise((resolve) => this.once('networkUsage', resolve));
   }
 
   checkIfProcessExists(pid:number): Promise<boolean> {
@@ -260,12 +262,14 @@ class FFMpegProcessManager extends EventEmitter {
     await exitPromise;
     clearTimeout(sigkillTimeout);
     clearTimeout(sigquitTimeout);
-    logger.info(`Stopped ${name} process ${pid}`);
     const id = this.pids.get(pid);
     if (id) {
+      logger.info(`Stopped ${name} process ${pid} with id ${id}`);
       this.pids.delete(pid);
       this.ids.delete(id);
       this.emit('close', id);
+    } else {
+      logger.info(`Stopped ${name} process ${pid}`);
     }
   }
 
@@ -398,11 +402,11 @@ class FFMpegProcessManager extends EventEmitter {
   }
 
   async restart(id:string) {
-    logger.warn(`Restarting process with ID ${id}`);
     const keepAliveData = this.keepAlive[id];
     if (!keepAliveData) {
       return;
     }
+    logger.warn(`Restarting process with ID ${id}`);
     const { attempt, args } = keepAliveData;
     this.keepAlive[id] = { attempt: attempt + 1, args };
     if (attempt < 6) {
