@@ -77,6 +77,7 @@ describe('FFMpeg Process Manager Data Output', () => {
       });
     });
     expect(progress).toEqual({
+      droppedFrames: expect.any(Number),
       fps: expect.any(Number),
       bitrate: expect.any(Number),
       speed: expect.any(Number),
@@ -104,6 +105,7 @@ describe('FFMpeg Process Manager Data Output', () => {
       bitrateOut: expect.any(Number),
       cpu: expect.any(Number),
       memory: expect.any(Number),
+      droppedFrames: expect.any(Number),
       fps: expect.any(Number),
       bitrate: expect.any(Number),
       speed: expect.any(Number),

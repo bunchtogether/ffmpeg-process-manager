@@ -305,6 +305,20 @@ class FFMpegProcessManager extends EventEmitter {
     await fs.ensureFile(progressOutputPath);
     const fd = await fs.open(progressOutputPath, 'r');
     let lastSize = (await fs.fstat(fd)).size;
+    let previousData = {
+      frame: 0,
+      fps: 0,
+      stream_0_0_q: 0,
+      bitrate: 0,
+      total_size: 0,
+      out_time_us: 0,
+      out_time_ms: 0,
+      out_time: 0,
+      dup_frames: 0,
+      drop_frames: 0,
+      speed: 0,
+      progress: NaN,
+    };
     const watcher = fs.watch(progressOutputPath, async (event) => {
       if (event === 'change') {
         const stat = await fs.fstat(fd);
@@ -324,10 +338,12 @@ class FFMpegProcessManager extends EventEmitter {
           }
         });
         const progress = {
+          droppedFrames: (isNaN(data.frame) || isNaN(previousData.frame) || isNaN(data.drop_frames) || isNaN(previousData.drop_frames)) ? 1 : (data.drop_frames - previousData.drop_frames) / (data.frame - previousData.frame),
           fps: isNaN(data.fps) ? 0 : data.fps,
           bitrate: isNaN(data.bitrate) ? 0 : data.bitrate,
           speed: isNaN(data.speed) ? 0 : data.speed,
         };
+        previousData = data;
         this.emit('progress', id, progress);
         this.progress.set(id, progress);
       } else if (event === 'rename') {
