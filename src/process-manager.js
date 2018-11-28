@@ -16,9 +16,14 @@ type OptionsType = {
   updateIntervalSeconds?: number
 };
 
+type StartOptionsType = {
+  skipInit?: boolean,
+  keepAlive?: boolean
+};
 
 class FFMpegProcessManager extends EventEmitter {
   ready: Promise<void>;
+  attachedToExistingProcesses: Promise<void>;
   outputPath: string;
   networkUsageProcess: child_process$ChildProcess; // eslint-disable-line camelcase
   networkUsage: Map<number, {bitrateIn: number, bitrateOut: number}>;
@@ -26,13 +31,17 @@ class FFMpegProcessManager extends EventEmitter {
   interval: IntervalID;
   updateIntervalSeconds: number;
   pids: Map<number, string>;
+  keepAliveAttempts: {[string]: number};
   isShuttingDown: boolean;
+  id: number;
 
   constructor(options?:OptionsType = {}) {
     super();
+    this.id = Math.round(Math.random() * 1000);
     this.outputPath = path.resolve(path.join(os.tmpdir(), 'node-ffmpeg-process-manager'));
     this.networkUsage = new Map();
     this.progress = new Map();
+    this.keepAliveAttempts = {};
     this.updateIntervalSeconds = options.updateIntervalSeconds || 10;
     this.pids = new Map();
     this.isShuttingDown = false;
@@ -51,8 +60,9 @@ class FFMpegProcessManager extends EventEmitter {
         await this.monitorProcessNetworkUsage();
         this.interval = setInterval(() => this.updateStatus(), this.updateIntervalSeconds * 1000);
         const processes = await this.getFFMpegProcesses();
-        for (const args of processes.values()) {
-          await this.start(args);
+        for (const [pid, args] of processes) {
+          logger.warn(`Found process ${pid} on init, starting with [${args.join(', ')}]`);
+          await this.start(args, { skipInit: true });
         }
       })();
     }
@@ -64,7 +74,7 @@ class FFMpegProcessManager extends EventEmitter {
       this.isShuttingDown = true;
       clearInterval(this.interval);
       if (this.networkUsageProcess) {
-        await this.killProcess(this.networkUsageProcess.pid);
+        await this.killProcess(this.networkUsageProcess.pid, 'network usage monitoring');
       }
       logger.info('Shut down');
     }
@@ -77,14 +87,9 @@ class FFMpegProcessManager extends EventEmitter {
     const processes = await this.getFFMpegProcesses();
     for (const [pid, id] of this.pids) {
       if (!processes.has(pid)) {
-        logger.warn(`Process ${pid} with ID ${id} was not found, emitting "close" event`);
+        logger.warn(`Process ${pid} with ID ${id} closed`);
         this.pids.delete(pid);
         this.emit('close', id);
-      }
-    }
-    for (const [pid, args] of processes) {
-      if (!this.pids.has(pid)) {
-        await this.start(args);
       }
     }
     if (this.pids.size === 0) {
@@ -208,7 +213,7 @@ class FFMpegProcessManager extends EventEmitter {
     });
   }
 
-  async killProcess(pid:number) {
+  async killProcess(pid:number, name:string) {
     const exitPromise = new Promise(async (resolve, reject) => {
       for (let i = 0; i < 20; i += 1) {
         const processExists = await this.checkIfProcessExists(pid);
@@ -218,25 +223,25 @@ class FFMpegProcessManager extends EventEmitter {
         }
         await new Promise((r) => setTimeout(r, 1000));
       }
-      logger.error(`Timeout when stopping process ${pid}`);
-      reject(new Error(`FFMpegProcessManager timed out when stopping process ${pid}`));
+      logger.error(`Timeout when stopping ${name} process ${pid}`);
+      reject(new Error(`FFMpegProcessManager timed out when stopping ${name} process ${pid}`));
     });
-    logger.info(`Sending SIGTERM to process ${pid}`);
+    logger.info(`Sending SIGTERM to ${name} process ${pid}`);
     try {
       process.kill(pid, 'SIGTERM');
     } catch (error) {
-      logger.error(`Error with SIGTERM signal on process ${pid}: ${error.message}`);
+      logger.error(`Error with SIGTERM signal on ${name} process ${pid}: ${error.message}`);
     }
     const sigkillTimeout = setTimeout(async () => {
       const processExists = await this.checkIfProcessExists(pid);
       if (!processExists) {
         return;
       }
-      logger.info(`Sending SIGKILL to process ${pid}`);
+      logger.info(`Sending SIGKILL to ${name} process ${pid}`);
       try {
         process.kill(pid, 'SIGKILL');
       } catch (error) {
-        logger.error(`Error with SIGKILL signal on process ${pid}: ${error.message}`);
+        logger.error(`Error with SIGKILL signal on ${name} process ${pid}: ${error.message}`);
       }
     }, 10000);
     const sigquitTimeout = setTimeout(async () => {
@@ -244,17 +249,17 @@ class FFMpegProcessManager extends EventEmitter {
       if (!processExists) {
         return;
       }
-      logger.info(`Sending SIGQUIT to ${pid}`);
+      logger.info(`Sending SIGQUIT to ${name} process ${pid}`);
       try {
         process.kill(pid, 'SIGQUIT');
       } catch (error) {
-        logger.error(`Error with SIGQUIT signal on process ${pid}: ${error.message}`);
+        logger.error(`Error with SIGQUIT signal on ${name} process ${pid}: ${error.message}`);
       }
     }, 15000);
     await exitPromise;
     clearTimeout(sigkillTimeout);
     clearTimeout(sigquitTimeout);
-    logger.info(`Stopped process ${pid}`);
+    logger.info(`Stopped ${name} process ${pid}`);
     const id = this.pids.get(pid);
     if (id) {
       this.pids.delete(pid);
@@ -266,7 +271,13 @@ class FFMpegProcessManager extends EventEmitter {
     return farmhash.hash32(stringify(args)).toString(36);
   }
 
-  async checkIfProcessIsUpdating(progressOutputPath: string) {
+  getProgressOutputPath(args:Array<string>) {
+    const id = this.getId(args);
+    return path.resolve(path.join(this.outputPath, `${id}.log`));
+  }
+
+  async checkIfProcessIsUpdating(args:Array<string>) {
+    const progressOutputPath = this.getProgressOutputPath(args);
     await fs.ensureFile(progressOutputPath);
     return new Promise((resolve) => {
       const watcher = fs.watch(progressOutputPath, async (event) => {
@@ -279,7 +290,7 @@ class FFMpegProcessManager extends EventEmitter {
       const timeout = setTimeout(() => {
         watcher.close();
         resolve(false);
-      }, 3000);
+      }, 10000);
     });
   }
 
@@ -301,7 +312,9 @@ class FFMpegProcessManager extends EventEmitter {
         const data = {};
         buffer.toString('utf-8').trim().split('\n').forEach((line) => {
           const [key, value] = line.split('=');
-          data[key.trim()] = parseInt(value.replace(/[^0-9.]/g, ''), 10);
+          if (key && value) {
+            data[key.trim()] = parseInt(value.replace(/[^0-9.]/g, ''), 10);
+          }
         });
         const progress = {
           fps: isNaN(data.fps) ? 0 : data.fps,
@@ -319,7 +332,7 @@ class FFMpegProcessManager extends EventEmitter {
   }
 
   startProcess(id:string, args:Array<string>, progressOutputPath: string):child_process$ChildProcess { // eslint-disable-line camelcase
-    const combinedArgs = ['-v', 'quiet', '-nostats', '-progress', `"${progressOutputPath}"`].concat(args);
+    const combinedArgs = ['-v', 'quiet', '-nostats', '-progress', `${progressOutputPath}`].concat(args).map((x) => `"${x}"`);
     const mainProcess = spawn(`"${ffmpegPath}"`, combinedArgs, {
       windowsHide: true,
       shell: true,
@@ -343,10 +356,11 @@ class FFMpegProcessManager extends EventEmitter {
     return mainProcess;
   }
 
-  async start(args:Array<string>) {
-    await this.init();
+  async start(args:Array<string>, options?:StartOptionsType = {}) {
     const id = this.getId(args);
-    const progressOutputPath = path.resolve(path.join(this.outputPath, `${id}.log`));
+    if (!options.skipInit) {
+      await this.init();
+    }
     let existingPid;
     let processIsUpdating;
     const processes = await this.getFFMpegProcesses();
@@ -354,35 +368,44 @@ class FFMpegProcessManager extends EventEmitter {
     for (const [ffmpegProcessId, ffmpegArgs] of processes) {
       if (JSON.stringify(ffmpegArgs) === stringifiedArgs) {
         existingPid = ffmpegProcessId;
-        processIsUpdating = await this.checkIfProcessIsUpdating(progressOutputPath);
+        processIsUpdating = await this.checkIfProcessIsUpdating(args);
         if (processIsUpdating) {
-          logger.info(`Found updating process ${existingPid} with ID ${id}`);
+          logger.info(`Found updating FFMpeg process ${existingPid} with ID ${id}`);
         } else {
-          logger.warn(`Killing non-updating process ${existingPid} with ID ${id}`);
-          await this.killProcess(existingPid);
+          await this.killProcess(existingPid, 'non-updating ffmpeg');
         }
         break;
       }
     }
+    const progressOutputPath = this.getProgressOutputPath(args);
     const pid = existingPid && processIsUpdating ? existingPid : (this.startProcess(id, args, progressOutputPath)).pid;
     this.pids.set(pid, id);
     const stopWatchingProgressOutput = await this.startWatchingProgressOutput(id, progressOutputPath);
-    const closePromise = new Promise((resolve, reject) => {
-      this.once('error', reject);
-      this.once('close', async (closedProcessId:string) => {
-        if (closedProcessId === id) {
-          logger.info(`Cleaning up process ${pid} with ID ${id} after close`);
-          await stopWatchingProgressOutput();
-          await fs.remove(progressOutputPath);
-        }
-      });
-    });
-    return [id, pid, async () => {
-      if (this.pids.has(pid)) {
-        await this.killProcess(pid);
-        await closePromise;
+    const handler = async (closedProcessId:string) => {
+      if (closedProcessId !== id) {
+        return;
       }
-    }];
+      if (options.keepAlive) {
+        this.start(args);
+        return;
+      }
+      await stopWatchingProgressOutput();
+      await fs.remove(progressOutputPath);
+      this.removeListener('close', handler);
+    };
+    this.on('close', handler);
+    return [id, pid];
+  }
+
+  async stop(id:string) {
+    const processesBeforeClose = await this.getFFMpegProcesses();
+    const killPromises = [];
+    for (const [ffmpegProcessId, ffmpegArgs] of processesBeforeClose) {
+      if (id === this.getId(ffmpegArgs)) {
+        killPromises.push(this.killProcess(ffmpegProcessId, 'ffmpeg'));
+      }
+    }
+    await Promise.all(killPromises);
   }
 }
 

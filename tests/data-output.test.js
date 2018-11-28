@@ -7,7 +7,7 @@ const fs = require('fs-extra');
 
 jest.setTimeout(60000);
 
-describe('FFMpeg Process Manager', () => {
+describe('FFMpeg Process Manager Data Output', () => {
   const processManager = new FFMpegProcessManager({ updateIntervalSeconds: 1 });
 
   const testFilePath = path.resolve(__dirname, 'test.mp4');
@@ -118,7 +118,7 @@ describe('FFMpeg Process Manager', () => {
     const [ffmpegJobId] = await processManager.start(['-y', '-i', testFilePath, '-vf', 'scale=iw/2:ih/2', testFilePathHalfSize]);
     const status = await new Promise((resolve, reject) => {
       const timeout = setTimeout(() => {
-        reject(new Error('Timeout for FFMpeg process’s progress'));
+        reject(new Error('Timeout for FFMpeg process’s status'));
       }, 5000);
       processManager.once('error', reject);
       processManager.once('status', (id, data) => {
