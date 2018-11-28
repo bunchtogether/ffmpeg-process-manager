@@ -353,17 +353,6 @@ class FFMpegProcessManager extends EventEmitter {
     logger.warn(`Restarted process with ID ${id}`);
   }
 
-  async startMonitoringProcess(id:string, pid: number) {
-    while (true) {
-      await new Promise((resolve) => setTimeout(resolve, this.updateIntervalSeconds * 1000));
-      const processExists = await this.checkIfProcessExists(pid);
-      if (!processExists) {
-        this.restart(id);
-        return;
-      }
-    }
-  }
-
   startProcess(id:string, args:Array<string>, progressOutputPath: string):child_process$ChildProcess { // eslint-disable-line camelcase
     const combinedArgs = ['-v', 'quiet', '-nostats', '-progress', `${progressOutputPath}`].concat(args).map((x) => `"${x}"`);
     const mainProcess = spawn(`"${ffmpegPath}"`, combinedArgs, {
@@ -383,7 +372,6 @@ class FFMpegProcessManager extends EventEmitter {
     mainProcess.once('close', async (code) => {
       if (code && code !== 255) {
         logger.error(`Process ${mainProcess.pid} with ID ${id} exited with error code ${code}`);
-        this.restart(id);
       }
     });
     logger.info(`Started process ${mainProcess.pid} with ID ${id}`);
@@ -415,9 +403,6 @@ class FFMpegProcessManager extends EventEmitter {
       }
     }
     const progressOutputPath = this.getProgressOutputPath(args);
-    if (existingPid && processIsUpdating) {
-      this.startMonitoringProcess(id, existingPid);
-    }
     const pid = existingPid && processIsUpdating ? existingPid : (this.startProcess(id, args, progressOutputPath)).pid;
     this.pids.set(pid, id);
     const stopWatchingProgressOutput = await this.startWatchingProgressOutput(id, progressOutputPath);
@@ -428,6 +413,7 @@ class FFMpegProcessManager extends EventEmitter {
       await stopWatchingProgressOutput();
       await fs.remove(progressOutputPath);
       this.removeListener('close', handler);
+      this.restart(id);
     };
     this.on('close', handler);
     return [id, pid];

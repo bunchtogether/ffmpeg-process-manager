@@ -2,7 +2,6 @@
 
 const expect = require('expect');
 const FFMpegProcessManager = require('../src/process-manager');
-// const fs = require('fs-extra');
 
 jest.setTimeout(60000);
 
@@ -95,7 +94,7 @@ describe('FFMpeg Process Manager Process Management', () => {
     await processManagerA.shutdown();
     await processManagerB.shutdown();
   });
-  test.skip('Should restart a stopped process', async () => {
+  test('Should restart a stopped process', async () => {
     const processManager = new FFMpegProcessManager({ updateIntervalSeconds: 1 });
     const waitForClose = (id) => new Promise((resolve, reject) => {
       const timeout = setTimeout(() => {
@@ -130,12 +129,13 @@ describe('FFMpeg Process Manager Process Management', () => {
     const args = ['-i', 'https://nhkwtvglobal-i.akamaihd.net/hls/live/263941/nhkwtvglobal/index_1180.m3u8', '-c', 'copy', '-f', 'mpegts', 'udp://127.0.0.1:48550?pkt_size=1316&burst_bits=13160&reuse=1'];
     const [ffmpegJobId, ffmpegJobPid] = await processManager.start(args); // eslint-disable-line no-unused-vars
     await waitForStatus(ffmpegJobId);
-    await new Promise((resolve) => setTimeout(resolve, 45000));
+    const closePromise1 = waitForClose(ffmpegJobId);
     process.kill(ffmpegJobPid, 'SIGTERM');
-    await waitForClose(ffmpegJobId);
+    await closePromise1;
     await waitForStatus(ffmpegJobId);
+    const closePromise2 = waitForClose(ffmpegJobId);
     await processManager.stop(ffmpegJobId);
-    await waitForClose(ffmpegJobId);
+    await closePromise2;
     await processManager.shutdown();
   });
 });
