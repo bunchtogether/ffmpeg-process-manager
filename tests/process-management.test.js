@@ -11,7 +11,7 @@ describe('FFMpeg Process Manager Process Management', () => {
     const processManagerA = new FFMpegProcessManager({ updateIntervalSeconds: 1 });
     const processManagerB = new FFMpegProcessManager({ updateIntervalSeconds: 1 });
     const args = ['-f', 'lavfi', '-re', '-i', 'testsrc=size=1280x720:rate=30', '-f', 'mpegts', 'udp://127.0.0.1:2222'];
-    const [ffmpegJobId, ffmpegJobPid, stopFFMpegJob] = await processManagerA.start(args); // eslint-disable-line no-unused-vars
+    const [ffmpegJobId, ffmpegJobPid] = await processManagerA.start(args); // eslint-disable-line no-unused-vars
     await processManagerB.init();
     const statusA = await waitForStatus(processManagerA, ffmpegJobId);
     expect(statusA).toEqual({

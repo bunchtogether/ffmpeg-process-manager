@@ -18,13 +18,16 @@ describe('FFMpeg Process Manager Data Output', () => {
 
   test('Should monitor network usage', async () => {
     const networkUsage = await new Promise((resolve, reject) => {
-      processManager.once('networkUsage', (data) => {
-        processManager.removeListener('error', reject);
-        resolve(data);
-      });
-      processManager.once('error', reject);
+      const handler = (data) => {
+        if (data.size > 0) {
+          processManager.removeListener('networkUsage', handler);
+          processManager.removeListener('error', reject);
+          resolve(data);
+        }
+      };
+      processManager.on('networkUsage', handler);
+      processManager.on('error', reject);
     });
-    expect(networkUsage.size).toBeGreaterThan(0);
     for (const [pid, values] of networkUsage) {
       expect(pid).toEqual(expect.any(Number));
       expect(values).toEqual({
@@ -36,7 +39,7 @@ describe('FFMpeg Process Manager Data Output', () => {
 
   test('Should get managed FFMpeg processes', async () => {
     const ffmpegProcessArgs = ['-f', 'lavfi', '-re', '-i', 'testsrc=size=1280x720:rate=30', '-f', 'mpegts', 'udp://127.0.0.1:2222'];
-    const [ffmpegJobId, ffmpegProcessId] = await processManager.start(ffmpegProcessArgs, { skipRestart: true });
+    const [ffmpegJobId, ffmpegProcessId] = await processManager.start(ffmpegProcessArgs);
     const processes = await processManager.getFFMpegProcesses();
     expect(processes.size).toEqual(1);
     for (const [pid, args] of processes) {
@@ -113,23 +116,28 @@ describe('FFMpeg Process Manager Data Output', () => {
   });
 
   test('Should restart the network usage process if it stops', async () => {
-    let networkUsage = await new Promise((resolve, reject) => {
-      processManager.once('networkUsage', (data) => {
-        processManager.removeListener('error', reject);
-        resolve(data);
-      });
-      processManager.once('error', reject);
+    await new Promise((resolve, reject) => {
+      const handler = (data) => {
+        if (data.size > 0) {
+          processManager.removeListener('networkUsage', handler);
+          processManager.removeListener('error', reject);
+          resolve(data);
+        }
+      };
+      processManager.on('networkUsage', handler);
+      processManager.on('error', reject);
     });
-    expect(networkUsage.size).toBeGreaterThan(0);
     process.kill(processManager.networkUsageProcess.pid, 'SIGTERM');
-    await new Promise((resolve) => setTimeout(resolve, 1000));
-    networkUsage = await new Promise((resolve, reject) => {
-      processManager.once('networkUsage', (data) => {
-        processManager.removeListener('error', reject);
-        resolve(data);
-      });
-      processManager.once('error', reject);
+    await new Promise((resolve, reject) => {
+      const handler = (data) => {
+        if (data.size > 0) {
+          processManager.removeListener('networkUsage', handler);
+          processManager.removeListener('error', reject);
+          resolve(data);
+        }
+      };
+      processManager.on('networkUsage', handler);
+      processManager.on('error', reject);
     });
-    expect(networkUsage.size).toBeGreaterThan(0);
   });
 });
