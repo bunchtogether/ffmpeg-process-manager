@@ -575,6 +575,9 @@ class FFMpegProcessManager extends EventEmitter {
   }
 
   async _start(args:Array<string>, options?:StartOptionsType = {}) {
+    if (!options.skipInit) {
+      await this.init();
+    }
     const id = this.getId(args);
     const managedPid = this.ids.get(id);
     if (managedPid) {
@@ -583,9 +586,6 @@ class FFMpegProcessManager extends EventEmitter {
     }
     if (!options.skipRestart) {
       this.keepAlive.set(id, this.keepAlive.get(id) || { attempt: 0, args });
-    }
-    if (!options.skipInit) {
-      await this.init();
     }
     let existingPid;
     let processIsUpdating;
