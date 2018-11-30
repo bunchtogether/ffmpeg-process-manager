@@ -56,4 +56,11 @@ describe('FFMpeg Process Manager Process Management', () => {
     await closePromise2;
     await processManager.shutdown();
   });
+  test('Should start a test source', async () => {
+    const processManager = new FFMpegProcessManager({ updateIntervalSeconds: 1 });
+    const [ffmpegJobId] = await processManager.startTestSource('rtp://127.0.0.1:2222'); // eslint-disable-line no-unused-vars
+    await waitForStatus(processManager, ffmpegJobId);
+    await processManager.stop(ffmpegJobId);
+    await processManager.shutdown();
+  });
 });
