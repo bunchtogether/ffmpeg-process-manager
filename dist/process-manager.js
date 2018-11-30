@@ -35,7 +35,7 @@ class FFMpegProcessManager extends EventEmitter {
                                 
                             
                            
-                                                                 
+                                                                  
                           
                    
                                                                 
@@ -46,7 +46,7 @@ class FFMpegProcessManager extends EventEmitter {
     this.outputPath = path.resolve(path.join(os.tmpdir(), 'node-ffmpeg-process-manager'));
     this.networkUsage = new Map();
     this.progress = new Map();
-    this.keepAlive = {};
+    this.keepAlive = new Map();
     this.updateIntervalSeconds = options.updateIntervalSeconds || 10;
     this.pids = new Map();
     this.ids = new Map();
@@ -55,7 +55,7 @@ class FFMpegProcessManager extends EventEmitter {
     this.closeHandlers = new Map();
     this.start = mergeAsyncCalls(this._start.bind(this)); // eslint-disable-line  no-underscore-dangle
     const shutdown = this.shutdown.bind(this);
-    process.on('EXIT', shutdown);
+    process.on('exit', shutdown);
     process.on('SIGTERM', shutdown);
     process.on('SIGINT', shutdown);
     process.on('SIGBREAK', shutdown);
@@ -113,6 +113,7 @@ class FFMpegProcessManager extends EventEmitter {
           await new Promise((resolve) => setTimeout(resolve, 1000));
           process.exit(1);
         }
+        logger.info('Initialized');
       })();
     }
     return this.ready;
@@ -141,6 +142,14 @@ class FFMpegProcessManager extends EventEmitter {
         await this.killProcess(this.networkUsageProcess.pid, 'network usage monitoring');
       }
       logger.info('Shut down');
+      delete this.ready;
+      this.isShuttingDown = false;
+      this.networkUsage = new Map();
+      this.progress = new Map();
+      this.keepAlive = new Map();
+      this.pids = new Map();
+      this.ids = new Map();
+      this.closeHandlers = new Map();
     }
   }
 
@@ -524,13 +533,13 @@ class FFMpegProcessManager extends EventEmitter {
   }
 
   async restart(id       ) {
-    const keepAliveData = this.keepAlive[id];
+    const keepAliveData = this.keepAlive.get(id);
     if (!keepAliveData) {
       return;
     }
     logger.warn(`Restarting process with ID ${id}`);
     const { attempt, args } = keepAliveData;
-    this.keepAlive[id] = { attempt: attempt + 1, args };
+    this.keepAlive.set(id, { attempt: attempt + 1, args });
     if (attempt < 6) {
       await new Promise((resolve) => setTimeout(resolve, 1000 * attempt * attempt));
     } else {
@@ -573,7 +582,7 @@ class FFMpegProcessManager extends EventEmitter {
       return [id, managedPid];
     }
     if (!options.skipRestart) {
-      this.keepAlive[id] = this.keepAlive[id] || { attempt: 0, args };
+      this.keepAlive.set(id, this.keepAlive.get(id) || { attempt: 0, args });
     }
     if (!options.skipInit) {
       await this.init();
@@ -643,7 +652,7 @@ class FFMpegProcessManager extends EventEmitter {
   }
 
   async stop(id       ) {
-    delete this.keepAlive[id];
+    this.keepAlive.delete(id);
     const processesBeforeClose = await this.getFFMpegProcesses();
     const pids = new Set();
     const mainPid = this.ids.get(id);
