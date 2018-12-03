@@ -1,10 +1,10 @@
 // @flow
 
-import type FFMpegProcessManager from '../../src/process-manager';
+import type FFmpegProcessManager from '../../src/process-manager';
 
-module.exports.waitForClose = (processManager:FFMpegProcessManager, id:string):Promise<void> => new Promise((resolve, reject) => {
+module.exports.waitForClose = (processManager:FFmpegProcessManager, id:string):Promise<void> => new Promise((resolve, reject) => {
   const timeout = setTimeout(() => {
-    reject(new Error('Timeout on close of managed FFMpeg process'));
+    reject(new Error('Timeout on close of managed FFmpeg process'));
   }, 30000);
   const handleClose = (closedId:string) => {
     if (closedId === id) {
@@ -18,9 +18,9 @@ module.exports.waitForClose = (processManager:FFMpegProcessManager, id:string):P
   processManager.once('error', reject);
 });
 
-module.exports.waitForStatus = (processManager:FFMpegProcessManager, id:string):Promise<Object> => new Promise((resolve, reject) => {
+module.exports.waitForStatus = (processManager:FFmpegProcessManager, id:string):Promise<Object> => new Promise((resolve, reject) => {
   const timeout = setTimeout(() => {
-    reject(new Error('Timeout on status of managed FFMpeg process'));
+    reject(new Error('Timeout on status of managed FFmpeg process'));
   }, 30000);
   const handleStatus = (statusId:string, data:Object) => {
     if (statusId === id) {
@@ -34,9 +34,9 @@ module.exports.waitForStatus = (processManager:FFMpegProcessManager, id:string):
   processManager.once('error', reject);
 });
 
-module.exports.waitForStdErr = (processManager:FFMpegProcessManager, id:string):Promise<string> => new Promise((resolve, reject) => {
+module.exports.waitForStdErr = (processManager:FFmpegProcessManager, id:string):Promise<string> => new Promise((resolve, reject) => {
   const timeout = setTimeout(() => {
-    reject(new Error('Timeout on stderr of managed FFMpeg process'));
+    reject(new Error('Timeout on stderr of managed FFmpeg process'));
   }, 30000);
   const handleStdErr = (stdErrId:string, message:string) => {
     if (stdErrId === id) {

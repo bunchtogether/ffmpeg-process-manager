@@ -1,12 +1,13 @@
 // @flow
 
 const expect = require('expect');
-const { FFMpegProcessManager } = require('../src');
+const { FFmpegProcessManager } = require('../src');
+const testArgs = require('./lib/test-args');
 
 jest.setTimeout(60000);
 
-describe('FFMpeg Process Manager Data Output', () => {
-  const processManager = new FFMpegProcessManager({ updateIntervalSeconds: 1 });
+describe('FFmpeg Process Manager Data Output', () => {
+  const processManager = new FFmpegProcessManager({ updateIntervalSeconds: 1 });
 
   beforeAll(async () => {
     await processManager.init();
@@ -37,20 +38,19 @@ describe('FFMpeg Process Manager Data Output', () => {
     }
   });
 
-  test('Should get managed FFMpeg processes', async () => {
-    const ffmpegProcessArgs = ['-f', 'lavfi', '-re', '-i', 'testsrc=size=1280x720:rate=30', '-f', 'mpegts', 'udp://127.0.0.1:2222'];
-    const [ffmpegJobId, ffmpegProcessId] = await processManager.start(ffmpegProcessArgs);
-    const processes = await processManager.getFFMpegProcesses();
+  test('Should get managed FFmpeg processes', async () => {
+    const [ffmpegJobId, ffmpegProcessId] = await processManager.start(testArgs);
+    const processes = await processManager.getFFmpegProcesses();
     expect(processes.size).toEqual(1);
     for (const [pid, args] of processes) {
       expect(pid).toEqual(ffmpegProcessId);
-      expect(args).toEqual(ffmpegProcessArgs);
+      expect(args).toEqual(testArgs);
     }
     await processManager.stop(ffmpegJobId);
   });
 
-  test('Should get a FFMpeg process’s CPU and memory usage', async () => {
-    const [ffmpegJobId, ffmpegProcessId] = await processManager.start(['-f', 'lavfi', '-re', '-i', 'testsrc=size=1280x720:rate=30', '-f', 'mpegts', 'udp://127.0.0.1:2222']);
+  test('Should get a FFmpeg process’s CPU and memory usage', async () => {
+    const [ffmpegJobId, ffmpegProcessId] = await processManager.start(testArgs);
     const cpuAndMemoryUsage = await processManager.getCpuAndMemoryUsage([...processManager.pids.keys()]);
     expect(cpuAndMemoryUsage.size).toEqual(1);
     for (const [pid, values] of cpuAndMemoryUsage) {
@@ -63,11 +63,11 @@ describe('FFMpeg Process Manager Data Output', () => {
     await processManager.stop(ffmpegJobId);
   });
 
-  test('Should get a FFMpeg process’s progress', async () => {
-    const [ffmpegJobId] = await processManager.start(['-f', 'lavfi', '-re', '-i', 'testsrc=size=1280x720:rate=30', '-f', 'mpegts', 'udp://127.0.0.1:2222']);
+  test('Should get a FFmpeg process’s progress', async () => {
+    const [ffmpegJobId] = await processManager.start(testArgs);
     const progress = await new Promise((resolve, reject) => {
       const timeout = setTimeout(() => {
-        reject(new Error('Timeout for FFMpeg process’s progress'));
+        reject(new Error('Timeout for FFmpeg process’s progress'));
       }, 5000);
       processManager.once('error', reject);
       processManager.once('progress', (id, data) => {
@@ -87,11 +87,11 @@ describe('FFMpeg Process Manager Data Output', () => {
     await processManager.stop(ffmpegJobId);
   });
 
-  test('Should get a FFMpeg process’s full status', async () => {
-    const [ffmpegJobId] = await processManager.start(['-f', 'lavfi', '-re', '-i', 'testsrc=size=1280x720:rate=30', '-f', 'mpegts', 'udp://127.0.0.1:2222']);
+  test('Should get a FFmpeg process’s full status', async () => {
+    const [ffmpegJobId] = await processManager.start(testArgs);
     const status = await new Promise((resolve, reject) => {
       const timeout = setTimeout(() => {
-        reject(new Error('Timeout for FFMpeg process’s status'));
+        reject(new Error('Timeout for FFmpeg process’s status'));
       }, 5000);
       processManager.once('error', reject);
       processManager.once('status', (id, data) => {

@@ -2319,9 +2319,9 @@ fecha@^2.3.3:
   version "2.3.3"
   resolved "http://registry.npmjs.org/fecha/-/fecha-2.3.3.tgz#948e74157df1a32fd1b12c3a3c3cdcb6ec9d96cd"
 
-ffmpeg-static@^2.4.0:
-  version "2.4.0"
-  resolved "https://registry.yarnpkg.com/ffmpeg-static/-/ffmpeg-static-2.4.0.tgz#eb3a248849943d493c2a311c0e5e45a06259103a"
+"ffmpeg-static@https://github.com/bunchtogether/ffmpeg-static.git#master":
+  version "1.0.0"
+  resolved "https://github.com/bunchtogether/ffmpeg-static.git#7d3f3267dab8c966f540b01bcf29cc50bd3580cd"
 
 figures@^2.0.0:
   version "2.0.0"

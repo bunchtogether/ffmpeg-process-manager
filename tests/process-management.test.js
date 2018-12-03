@@ -1,17 +1,17 @@
 // @flow
 
 const expect = require('expect');
-const { FFMpegProcessManager } = require('../src');
+const { FFmpegProcessManager } = require('../src');
 const { waitForClose, waitForStatus } = require('./lib/events');
+const testArgs = require('./lib/test-args');
 
 jest.setTimeout(60000);
 
-describe('FFMpeg Process Manager Process Management', () => {
+describe('FFmpeg Process Manager Process Management', () => {
   test('Should attach to existing processes', async () => {
-    const processManagerA = new FFMpegProcessManager({ updateIntervalSeconds: 1 });
-    const processManagerB = new FFMpegProcessManager({ updateIntervalSeconds: 1 });
-    const args = ['-f', 'lavfi', '-re', '-i', 'testsrc=size=1280x720:rate=30', '-f', 'mpegts', 'udp://127.0.0.1:2222'];
-    const [ffmpegJobId, ffmpegJobPid] = await processManagerA.start(args); // eslint-disable-line no-unused-vars
+    const processManagerA = new FFmpegProcessManager({ updateIntervalSeconds: 1 });
+    const processManagerB = new FFmpegProcessManager({ updateIntervalSeconds: 1 });
+    const [ffmpegJobId, ffmpegJobPid] = await processManagerA.start(testArgs); // eslint-disable-line no-unused-vars
     await processManagerB.init();
     const statusA = await waitForStatus(processManagerA, ffmpegJobId);
     expect(statusA).toEqual({
@@ -43,9 +43,8 @@ describe('FFMpeg Process Manager Process Management', () => {
     await processManagerB.shutdown();
   });
   test('Should restart a stopped process', async () => {
-    const processManager = new FFMpegProcessManager({ updateIntervalSeconds: 1 });
-    const args = ['-f', 'lavfi', '-re', '-i', 'testsrc=size=1280x720:rate=30', '-f', 'mpegts', 'udp://127.0.0.1:2222'];
-    const [ffmpegJobId, ffmpegJobPid] = await processManager.start(args); // eslint-disable-line no-unused-vars
+    const processManager = new FFmpegProcessManager({ updateIntervalSeconds: 1 });
+    const [ffmpegJobId, ffmpegJobPid] = await processManager.start(testArgs); // eslint-disable-line no-unused-vars
     await waitForStatus(processManager, ffmpegJobId);
     const closePromise1 = waitForClose(processManager, ffmpegJobId);
     process.kill(ffmpegJobPid, 'SIGTERM');
@@ -54,13 +53,6 @@ describe('FFMpeg Process Manager Process Management', () => {
     const closePromise2 = waitForClose(processManager, ffmpegJobId);
     await processManager.stop(ffmpegJobId);
     await closePromise2;
-    await processManager.shutdown();
-  });
-  test('Should start a test source', async () => {
-    const processManager = new FFMpegProcessManager({ updateIntervalSeconds: 1 });
-    const [ffmpegJobId] = await processManager.startTestSource('rtp://127.0.0.1:2222'); // eslint-disable-line no-unused-vars
-    await waitForStatus(processManager, ffmpegJobId);
-    await processManager.stop(ffmpegJobId);
     await processManager.shutdown();
   });
 });

@@ -1,3 +1,4 @@
 //      
 
-module.exports.FFMpegProcessManager = require('./process-manager');
+module.exports.FFmpegProcessManager = require('./process-manager');
+module.exports.TemporaryFFmpegProcessError = require('./temporary-ffmpeg-process-error');

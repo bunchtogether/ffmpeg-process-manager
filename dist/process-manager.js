@@ -1,6 +1,6 @@
 //      
 
-const ffmpegPath = require('ffmpeg-static').path;
+const { ffmpegPath } = require('ffmpeg-static');
 const { spawn } = require('child_process');
 const stringify = require('json-stringify-deterministic');
 const farmhash = require('farmhash');
@@ -13,6 +13,7 @@ const logger = require('./logger')('FFmpeg Process Manager');
 const pidusage = require('pidusage');
 const commandExists = require('command-exists');
 const mergeAsyncCalls = require('./merge-async-calls');
+const TemporaryFFmpegProcessError = require('./temporary-ffmpeg-process-error');
 
                     
                                 
@@ -25,7 +26,7 @@ const mergeAsyncCalls = require('./merge-async-calls');
 
 const nethogsRegex = /([0-9]+)\/[0-9]+\t([0-9.]+)\t([0-9.]+)/g;
 
-class FFMpegProcessManager extends EventEmitter {
+class FFmpegProcessManager extends EventEmitter {
                        
                      
                                                    // eslint-disable-line camelcase
@@ -35,6 +36,7 @@ class FFMpegProcessManager extends EventEmitter {
                                 
                             
                            
+                        
                                                                   
                           
                    
@@ -50,6 +52,7 @@ class FFMpegProcessManager extends EventEmitter {
     this.updateIntervalSeconds = options.updateIntervalSeconds || 10;
     this.pids = new Map();
     this.ids = new Map();
+    this.tempPids = new Set();
     this.isShuttingDown = false;
     this.platform = os.platform();
     this.closeHandlers = new Map();
@@ -98,9 +101,9 @@ class FFMpegProcessManager extends EventEmitter {
           await this.cleanupProcesses();
           await this.monitorProcessNetworkUsage();
           this.interval = setInterval(() => this.updateStatus(), this.updateIntervalSeconds * 1000);
-          const processes = await this.getFFMpegProcesses();
+          const processes = await this.getFFmpegProcesses();
           for (const [pid, args] of processes) {
-            logger.warn(`Found FFMpeg process ${pid} on init, starting with [${args.join(', ')}]`);
+            logger.warn(`Found FFmpeg process ${pid} on init, starting with [${args.join(', ')}]`);
             await this.start(args, { skipInit: true });
           }
         } catch (error) {
@@ -120,7 +123,7 @@ class FFMpegProcessManager extends EventEmitter {
   }
 
   async cleanupProcesses() {
-    const processes = await this.getFFMpegProcesses();
+    const processes = await this.getFFmpegProcesses();
     const map = new Map();
     for (const [pid, args] of processes) {
       const id = this.getId(args);
@@ -129,7 +132,7 @@ class FFMpegProcessManager extends EventEmitter {
     for (const [pid, args] of processes) {
       const id = this.getId(args);
       if (map.get(id) !== pid) {
-        await this.killProcess(pid, 'redundant FFMpeg process');
+        await this.killProcess(pid, 'redundant FFmpeg process');
       }
     }
   }
@@ -138,9 +141,11 @@ class FFMpegProcessManager extends EventEmitter {
     if (!this.isShuttingDown) {
       this.isShuttingDown = true;
       clearInterval(this.interval);
+      const pidsToKill = [...this.tempPids].map((pid) => [pid, 'temporary FFmpeg process']);
       if (this.networkUsageProcess) {
-        await this.killProcess(this.networkUsageProcess.pid, 'network usage monitoring');
+        pidsToKill.push([this.networkUsageProcess.pid, 'network usage monitoring']);
       }
+      await Promise.all(pidsToKill.map(([pid, name]) => this.killProcess(pid, name)));
       logger.info('Shut down');
       delete this.ready;
       this.isShuttingDown = false;
@@ -149,6 +154,7 @@ class FFMpegProcessManager extends EventEmitter {
       this.keepAlive = new Map();
       this.pids = new Map();
       this.ids = new Map();
+      this.tempPids = new Set();
       this.closeHandlers = new Map();
     }
   }
@@ -157,7 +163,7 @@ class FFMpegProcessManager extends EventEmitter {
     if (this.pids.size === 0) {
       return;
     }
-    const processes = await this.getFFMpegProcesses();
+    const processes = await this.getFFmpegProcesses();
     for (const [pid, id] of this.pids) {
       if (!processes.has(pid)) {
         logger.warn(`Process ${pid} with ID ${id} closed`);
@@ -212,7 +218,7 @@ class FFMpegProcessManager extends EventEmitter {
     });
   }
 
-  getFFMpegProcesses()                                     {
+  getFFmpegProcesses()                                     {
     return new Promise((resolve, reject) => {
       ps.lookup({ command: ffmpegPath }, (error, resultList) => {
         if (error) {
@@ -221,7 +227,9 @@ class FFMpegProcessManager extends EventEmitter {
           const processes = new Map();
           resultList.forEach((result) => {
             // Remove the "-v quiet -nostats -progress" args
-            processes.set(parseInt(result.pid, 10), result.arguments.slice(5));
+            if (result.arguments && result.arguments.indexOf('temporary_process="1"') === -1) {
+              processes.set(parseInt(result.pid, 10), result.arguments.slice(5));
+            }
           });
           resolve(processes);
         }
@@ -359,7 +367,7 @@ class FFMpegProcessManager extends EventEmitter {
         processExists = await this.checkIfProcessExists(pid);
       }
       logger.error(`Timeout when stopping ${name} process ${pid}`);
-      reject(new Error(`FFMpegProcessManager timed out when stopping ${name} process ${pid}`));
+      reject(new Error(`FFmpegProcessManager timed out when stopping ${name} process ${pid}`));
     });
     logger.info(`Sending SIGTERM to ${name} process ${pid}`);
     try {
@@ -476,10 +484,10 @@ class FFMpegProcessManager extends EventEmitter {
           this.progress.set(id, progress);
         } catch (error) {
           if (error.stack) {
-            logger.error(`Unable to get progress of FFMpeg process with ID ${id}:`);
+            logger.error(`Unable to get progress of FFmpeg process with ID ${id}:`);
             error.stack.split('\n').forEach((line) => logger.error(`\t${line.trim()}`));
           } else {
-            logger.error(`Unable to get progress of FFMpeg process with ID ${id}:' ${error.message}`);
+            logger.error(`Unable to get progress of FFmpeg process with ID ${id}:' ${error.message}`);
           }
         }
       }
@@ -510,18 +518,18 @@ class FFMpegProcessManager extends EventEmitter {
           const output = buffer.toString('utf-8').trim();
           const pid = this.ids.get(id);
           if (pid) {
-            logger.error(`FFMpeg process ${pid} with ID ${id}:`);
+            logger.error(`FFmpeg process ${pid} with ID ${id}:`);
           } else {
-            logger.error(`FFMpeg process with ID ${id}:`);
+            logger.error(`FFmpeg process with ID ${id}:`);
           }
           output.split('\n').forEach((line) => logger.error(`\t${line.trim()}`));
           this.emit('stderr', id, output);
         } catch (error) {
           if (error.stack) {
-            logger.error(`Unable to get stderr of FFMpeg process with ID ${id}:`);
+            logger.error(`Unable to get stderr of FFmpeg process with ID ${id}:`);
             error.stack.split('\n').forEach((line) => logger.error(`\t${line.trim()}`));
           } else {
-            logger.error(`Unable to get stderr of FFMpeg process with ID ${id}:' ${error.message}`);
+            logger.error(`Unable to get stderr of FFmpeg process with ID ${id}:' ${error.message}`);
           }
         }
       }
@@ -549,6 +557,47 @@ class FFMpegProcessManager extends EventEmitter {
     logger.warn(`Restarted process with ID ${id}`);
   }
 
+  async startTemporary(args              , duration       )                        {
+    const id = this.getId(args);
+    const combinedArgs = ['-v', 'error', '-nostats'].concat(args, ['-metadata', 'temporary_process="1"']);
+    const mainProcess = spawn(ffmpegPath, combinedArgs, {
+      windowsHide: true,
+      shell: false,
+      detached: false,
+    });
+    this.tempPids.add(mainProcess.pid);
+    logger.info(`Started temporary FFmpeg process ${mainProcess.pid} with ID ${id} for ${duration}ms`);
+    const promise = new Promise((resolve, reject) => {
+      let stderr = [];
+      const timeout = setTimeout(() => {
+        this.killProcess(mainProcess.pid, 'temporary FFmpeg process');
+      }, duration);
+      mainProcess.stderr.on('data', (data) => {
+        const message = data.toString('utf8').trim().split('\n').map((line) => line.trim());
+        message.forEach((line) => logger.error(line));
+        stderr = stderr.concat(message);
+      });
+      mainProcess.once('error', async (error) => {
+        clearTimeout(timeout);
+        reject(error);
+      });
+      mainProcess.once('close', async (code) => {
+        clearTimeout(timeout);
+        if (code && code !== 255) {
+          reject(new TemporaryFFmpegProcessError(`FFmpeg process ${mainProcess.pid} with ID ${id} exited with error code ${code}`, code, stderr));
+        } else {
+          resolve(stderr);
+        }
+      });
+    });
+    promise.then(() => {
+      this.tempPids.delete(mainProcess.pid);
+    }).catch(() => {
+      this.tempPids.delete(mainProcess.pid);
+    });
+    return promise;
+  }
+
   async startProcess(args              )                                     { // eslint-disable-line camelcase
     const id = this.getId(args);
     const progressOutputPath = this.getProgressOutputPath(args);
@@ -566,46 +615,12 @@ class FFMpegProcessManager extends EventEmitter {
     });
     mainProcess.once('close', async (code) => {
       if (code && code !== 255) {
-        logger.error(`FFMpeg process ${mainProcess.pid} with ID ${id} exited with error code ${code}`);
+        logger.error(`FFmpeg process ${mainProcess.pid} with ID ${id} exited with error code ${code}`);
       }
     });
-    logger.info(`Started FFMpeg process ${mainProcess.pid} with ID ${id}`);
+    logger.info(`Started FFmpeg process ${mainProcess.pid} with ID ${id}`);
     await fs.close(stdErrFileDescriptor);
     return mainProcess;
-  }
-
-  async startTestSource(destinationUrl       ) {
-    const args = [
-      '-re',
-      '-f', 'lavfi',
-      '-i', 'testsrc=rate=30:size=1920x1080,format=yuv420p',
-      '-re',
-      '-f', 'lavfi',
-      '-i', 'sine=frequency=100:sample_rate=44100:beep_factor=4',
-      '-c:v', 'libx264',
-      '-crf:v', '22',
-      '-preset:v', 'fast',
-      '-pix_fmt', 'yuv420p',
-      '-x264opts', 'keyint=30:no-scenecut=1',
-      '-maxrate:v', '2000k',
-      '-bufsize:v', '4800k',
-      '-g', '30',
-      '-c:a', 'aac',
-      '-ac', '2',
-      '-b:a', '96k',
-      '-maxrate:a', '96k',
-      '-bufsize:a', '192k',
-      '-preset', 'ultrafast',
-    ];
-    if (destinationUrl.indexOf('udp') !== -1) {
-      args.push('-f');
-      args.push('mpegts');
-    } else if (destinationUrl.indexOf('rtp') !== -1) {
-      args.push('-f');
-      args.push('rtp_mpegts');
-    }
-    args.push(destinationUrl);
-    return this.start(args);
   }
 
   async _start(args              , options                   = {}) {
@@ -615,7 +630,7 @@ class FFMpegProcessManager extends EventEmitter {
     const id = this.getId(args);
     const managedPid = this.ids.get(id);
     if (managedPid) {
-      logger.warn(`FFMpeg process ${managedPid} with ID ${id} is already running, skipping start`);
+      logger.warn(`FFmpeg process ${managedPid} with ID ${id} is already running, skipping start`);
       return [id, managedPid];
     }
     if (!options.skipRestart) {
@@ -623,16 +638,16 @@ class FFMpegProcessManager extends EventEmitter {
     }
     let existingPid;
     let processIsUpdating;
-    const processes = await this.getFFMpegProcesses();
+    const processes = await this.getFFmpegProcesses();
     const stringifiedArgs = stringify(args);
     for (const [ffmpegProcessId, ffmpegArgs] of processes) {
       if (stringify(ffmpegArgs) === stringifiedArgs) {
         existingPid = ffmpegProcessId;
         processIsUpdating = await this.checkIfProcessIsUpdating(args);
         if (processIsUpdating) {
-          logger.info(`Found updating FFMpeg process ${existingPid} with ID ${id}`);
+          logger.info(`Found updating FFmpeg process ${existingPid} with ID ${id}`);
         } else {
-          await this.killProcess(existingPid, 'non-updating FFMpeg');
+          await this.killProcess(existingPid, 'non-updating FFmpeg');
         }
         break;
       }
@@ -643,8 +658,8 @@ class FFMpegProcessManager extends EventEmitter {
     const stopWatchingErrorOutput = await this.startWatchingErrorOutput(id, errorOutputPath);
     const pid = existingPid && processIsUpdating ? existingPid : (await this.startProcess(args)).pid;
     if (this.ids.get(id)) {
-      await this.killProcess(pid, 'FFMpeg process');
-      throw new Error(`Conflicting ID ${id} for FFMpeg process ${pid}`);
+      await this.killProcess(pid, 'FFmpeg process');
+      throw new Error(`Conflicting ID ${id} for FFmpeg process ${pid}`);
     }
     this.pids.set(pid, id);
     this.ids.set(id, pid);
@@ -656,10 +671,10 @@ class FFMpegProcessManager extends EventEmitter {
         this.restart(id);
       } catch (error) {
         if (error.stack) {
-          logger.error(`Unable to close FFMpeg process ${pid} with ID ${id}:`);
+          logger.error(`Unable to close FFmpeg process ${pid} with ID ${id}:`);
           error.stack.split('\n').forEach((line) => logger.error(`\t${line.trim()}`));
         } else {
-          logger.error(`Unable to close FFMpeg process ${pid} with ID ${id}:' ${error.message}`);
+          logger.error(`Unable to close FFmpeg process ${pid} with ID ${id}:' ${error.message}`);
         }
       }
     };
@@ -687,7 +702,7 @@ class FFMpegProcessManager extends EventEmitter {
 
   async stop(id       ) {
     this.keepAlive.delete(id);
-    const processesBeforeClose = await this.getFFMpegProcesses();
+    const processesBeforeClose = await this.getFFmpegProcesses();
     const pids = new Set();
     const mainPid = this.ids.get(id);
     let closePromise;
@@ -695,7 +710,7 @@ class FFMpegProcessManager extends EventEmitter {
       pids.add(mainPid);
       closePromise = new Promise((resolve, reject) => {
         const timeout = setTimeout(() => {
-          reject(new Error(`Timeout on close event for FFMpeg process ${mainPid} with ID ${id}`));
+          reject(new Error(`Timeout on close event for FFmpeg process ${mainPid} with ID ${id}`));
         }, 20000);
         this.addCloseHandler(id, () => {
           clearTimeout(timeout);
@@ -708,7 +723,7 @@ class FFMpegProcessManager extends EventEmitter {
         pids.add(ffmpegProcessId);
       }
     }
-    await Promise.all([...pids].map((pid) => this.killProcess(pid, 'FFMpeg')));
+    await Promise.all([...pids].map((pid) => this.killProcess(pid, 'FFmpeg')));
     await this.cleanupJob(id);
     if (closePromise) {
       try {
@@ -720,4 +735,4 @@ class FFMpegProcessManager extends EventEmitter {
   }
 }
 
-module.exports = FFMpegProcessManager;
+module.exports = FFmpegProcessManager;
