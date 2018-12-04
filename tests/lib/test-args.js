@@ -1,3 +1,5 @@
+// @flow
+
 module.exports = [
   '-re',
   '-f', 'lavfi',
