@@ -8,6 +8,7 @@ const fs = require('fs-extra');
 const path = require('path');
 const os = require('os');
 const EventEmitter = require('events');
+const { addShutdownHandler } = require('exit-handler');
 const ps = require('ps-node');
 const logger = require('./lib/logger')('FFmpeg Process Manager');
 const pidusage = require('pidusage');
@@ -15,6 +16,7 @@ const commandExists = require('command-exists');
 const mergeAsyncCalls = require('./lib/merge-async-calls');
 const TemporaryFFmpegProcessError = require('./lib/temporary-ffmpeg-process-error');
 const killProcess = require('./lib/kill-process');
+
 
 type OptionsType = {
   updateIntervalSeconds?: number
@@ -46,6 +48,7 @@ class FFmpegProcessManager extends EventEmitter {
 
   constructor(options?:OptionsType = {}) {
     super();
+    this.isShuttingDown = false;
     this.outputPath = path.resolve(path.join(os.tmpdir(), 'node-ffmpeg-process-manager'));
     this.networkUsage = new Map();
     this.progress = new Map();
@@ -54,16 +57,17 @@ class FFmpegProcessManager extends EventEmitter {
     this.pids = new Map();
     this.ids = new Map();
     this.tempPids = new Set();
-    this.isShuttingDown = false;
     this.platform = os.platform();
     this.closeHandlers = new Map();
     this.start = mergeAsyncCalls(this._start.bind(this)); // eslint-disable-line  no-underscore-dangle
-    const shutdown = this.shutdown.bind(this);
-    process.on('exit', shutdown);
-    process.on('SIGTERM', shutdown);
-    process.on('SIGINT', shutdown);
-    process.on('SIGBREAK', shutdown);
-    process.on('SIGHUP', shutdown);
+    addShutdownHandler(this.shutdown.bind(this), (error:Error) => {
+      if (error.stack) {
+        logger.error('Error during shutdown:');
+        error.stack.split('\n').forEach((line) => logger.error(`\t${line.trim()}`));
+      } else {
+        logger.error(`Error during shutdown: ${error.message}`);
+      }
+    });
   }
 
   init() {
@@ -112,7 +116,7 @@ class FFmpegProcessManager extends EventEmitter {
             logger.error('Unable to start ffmpeg-process-manager:');
             error.stack.split('\n').forEach((line) => logger.error(`\t${line.trim()}`));
           } else {
-            logger.error(`'Unable to start ffmpeg-process-manager:' ${error.message}`);
+            logger.error(`Unable to start ffmpeg-process-manager: ${error.message}`);
           }
           await new Promise((resolve) => setTimeout(resolve, 1000));
           process.exit(1);
@@ -139,25 +143,26 @@ class FFmpegProcessManager extends EventEmitter {
   }
 
   async shutdown() {
-    if (!this.isShuttingDown) {
-      this.isShuttingDown = true;
-      clearInterval(this.interval);
-      const pidsToKill = [...this.tempPids].map((pid) => [pid, 'temporary FFmpeg process']);
-      if (this.networkUsageProcess) {
-        pidsToKill.push([this.networkUsageProcess.pid, 'network usage monitoring']);
-      }
-      await Promise.all(pidsToKill.map(([pid, name]) => killProcess(pid, name)));
-      logger.info('Shut down');
-      delete this.ready;
-      this.isShuttingDown = false;
-      this.networkUsage = new Map();
-      this.progress = new Map();
-      this.keepAlive = new Map();
-      this.pids = new Map();
-      this.ids = new Map();
-      this.tempPids = new Set();
-      this.closeHandlers = new Map();
+    if (this.isShuttingDown) {
+      return;
     }
+    this.isShuttingDown = true;
+    clearInterval(this.interval);
+    const pidsToKill = [...this.tempPids].map((pid) => [pid, 'temporary FFmpeg process']);
+    if (this.networkUsageProcess) {
+      pidsToKill.push([this.networkUsageProcess.pid, 'network usage monitoring']);
+    }
+    await Promise.all(pidsToKill.map(([pid, name]) => killProcess(pid, name)));
+    logger.info('Shut down');
+    delete this.ready;
+    this.networkUsage = new Map();
+    this.progress = new Map();
+    this.keepAlive = new Map();
+    this.pids = new Map();
+    this.ids = new Map();
+    this.tempPids = new Set();
+    this.closeHandlers = new Map();
+    this.isShuttingDown = false;
   }
 
   async updateStatus() {
@@ -496,8 +501,7 @@ class FFmpegProcessManager extends EventEmitter {
     logger.warn(`Restarted process with ID ${id}`);
   }
 
-  async startTemporary(args:Array<string>, duration:number):Promise<Array<string>> {
-    const id = this.getId(args);
+  async startTemporary(args:Array<string>, duration:number):Promise<void> {
     const combinedArgs = ['-v', 'error', '-nostats'].concat(args, ['-metadata', 'temporary_process="1"']);
     const mainProcess = spawn(ffmpegPath, combinedArgs, {
       windowsHide: true,
@@ -505,7 +509,7 @@ class FFmpegProcessManager extends EventEmitter {
       detached: false,
     });
     this.tempPids.add(mainProcess.pid);
-    logger.info(`Started temporary FFmpeg process ${mainProcess.pid} with ID ${id} for ${duration}ms`);
+    logger.info(`Started temporary FFmpeg process ${mainProcess.pid} for ${duration}ms`);
     const promise = new Promise((resolve, reject) => {
       let stderr = [];
       const timeout = setTimeout(() => {
@@ -513,7 +517,7 @@ class FFmpegProcessManager extends EventEmitter {
       }, duration);
       mainProcess.stderr.on('data', (data) => {
         const message = data.toString('utf8').trim().split('\n').map((line) => line.trim());
-        message.forEach((line) => logger.error(line));
+        message.forEach((line) => logger.error(`\t${line.trim()}`));
         stderr = stderr.concat(message);
       });
       mainProcess.once('error', async (error) => {
@@ -523,9 +527,17 @@ class FFmpegProcessManager extends EventEmitter {
       mainProcess.once('close', async (code) => {
         clearTimeout(timeout);
         if (code && code !== 255) {
-          reject(new TemporaryFFmpegProcessError(`FFmpeg process ${mainProcess.pid} with ID ${id} exited with error code ${code}`, code, stderr));
+          const message = `Temporary FFmpeg process ${mainProcess.pid} exited with error code ${code}`;
+          logger.error(message);
+          logger.error(`\tArguments: ${args.join(' ')}`);
+          reject(new TemporaryFFmpegProcessError(message, code, stderr));
+        } else if (stderr.length > 0) {
+          const message = `Temporary FFmpeg process ${mainProcess.pid} exited with error code ${code} but contained errors`;
+          logger.error(message);
+          logger.error(`\tArguments: ${args.join(' ')}`);
+          reject(new TemporaryFFmpegProcessError(message, code, stderr));
         } else {
-          resolve(stderr);
+          resolve();
         }
       });
     });

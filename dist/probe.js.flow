@@ -2,31 +2,30 @@
 
 const logger = require('./lib/logger')('FFmpeg Process Manager (FFprobe)');
 const { spawn } = require('child_process');
+const { addShutdownHandler } = require('exit-handler');
 const { ffprobePath } = require('ffmpeg-static');
 const FFprobeProcessError = require('./lib/ffprobe-process-error');
 const killProcess = require('./lib/kill-process');
 
 let pids = new Set();
-let isShuttingDown = false;
 
 const shutdown = async () => {
-  if (!isShuttingDown) {
-    isShuttingDown = true;
-    const pidsToKill = [...pids].map((pid) => [pid, 'FFprobe process']);
-    await Promise.all(pidsToKill.map(([pid, name]) => killProcess(pid, name)));
-    logger.info('Shut down');
-    isShuttingDown = false;
-    pids = new Set();
-  }
+  const pidsToKill = [...pids].map((pid) => [pid, 'FFprobe process']);
+  await Promise.all(pidsToKill.map(([pid, name]) => killProcess(pid, name)));
+  logger.info('Shut down');
+  pids = new Set();
 };
 
-module.exports.shutdownFFprobe = shutdown;
+addShutdownHandler(shutdown, (error:Error) => {
+  if (error.stack) {
+    logger.error('Error during shutdown:');
+    error.stack.split('\n').forEach((line) => logger.error(`\t${line.trim()}`));
+  } else {
+    logger.error(`Error during shutdown: ${error.message}`);
+  }
+});
 
-process.on('exit', shutdown);
-process.on('SIGTERM', shutdown);
-process.on('SIGINT', shutdown);
-process.on('SIGBREAK', shutdown);
-process.on('SIGHUP', shutdown);
+module.exports.shutdownFFprobe = shutdown;
 
 module.exports.startFFprobe = async (args:Array<string>):Promise<Array<string>> => {
   const combinedArgs = ['-v', 'quiet', '-print_format', 'json', '-show_format', '-show_streams', '-show_error'].concat(args);
@@ -59,18 +58,29 @@ module.exports.startFFprobe = async (args:Array<string>):Promise<Array<string>> 
       let stdoutData;
       try {
         stdoutData = JSON.parse(stdout.join(''));
-        JSON.stringify(stdoutData, null, 2).split('\n').forEach((line) => logger.info(line));
       } catch (error) {
         logger.error(error.message);
       }
       if (stdoutData && stdoutData.error && stdoutData.error.code && stdoutData.error.string) {
-        reject(new FFprobeProcessError(`FFprobe process ${mainProcess.pid} exited with error code ${code} and internal error code ${stdoutData.error.code}: ${stdoutData.error.string}`, stdoutData.error.code, stderr, stdoutData));
-      } else if (code && code !== 255) {
-        reject(new FFprobeProcessError(`FFprobe process ${mainProcess.pid} exited with error code ${code}`, code, stderr, stdoutData));
+        const message = `FFprobe process ${mainProcess.pid} exited with error code ${code} and internal error code ${stdoutData.error.code}: ${stdoutData.error.string}`;
+        logger.error(message);
+        logger.error(`\tArguments: ${args.join(' ')}`);
+        reject(new FFprobeProcessError(message, stdoutData.error.code, stderr, stdoutData));
       } else if (stderr.length > 0) {
-        reject(new FFprobeProcessError(`FFprobe process ${mainProcess.pid} exited with code ${code} but contained errors`, code, stderr, stdoutData));
+        const message = `FFprobe process ${mainProcess.pid} exited with code ${code} but contained errors`;
+        logger.error(message);
+        logger.error(`\tArguments: ${args.join(' ')}`);
+        reject(new FFprobeProcessError(message, code, stderr, stdoutData));
+      } else if (code && code !== 255) {
+        const message = `FFprobe process ${mainProcess.pid} exited with error code ${code}`;
+        logger.error(message);
+        logger.error(`\tArguments: ${args.join(' ')}`);
+        reject(new FFprobeProcessError(message, code, stderr, stdoutData));
       } else if (!stdoutData) {
-        reject(new FFprobeProcessError(`FFprobe process ${mainProcess.pid} exited with code ${code} but did not output any data`, code, stderr, stdoutData));
+        const message = `FFprobe process ${mainProcess.pid} exited with code ${code} but did not output any data`;
+        logger.error(message);
+        logger.error(`\tArguments: ${args.join(' ')}`);
+        reject(new FFprobeProcessError(message, code, stderr, stdoutData));
       } else {
         resolve(stdoutData);
       }

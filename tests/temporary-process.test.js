@@ -34,10 +34,12 @@ describe('FFmpeg Process Manager Temporary Process', () => {
       await processManager.startTemporary(args, 1000);
     } catch (error) {
       expect(error).toBeInstanceOf(TemporaryFFmpegProcessError);
-      expect(error.message).toEqual(expect.stringMatching(/FFmpeg process [0-9]+ with ID [a-z0-9]+ exited with error code 1/));
-      expect(error.code).toEqual(1);
-      expect(error.stack).toBeDefined();
-      expect(error.stderr.join('\n')).toEqual(expect.stringContaining('badfilter'));
+      expect(error).toEqual(expect.objectContaining({
+        message: expect.stringMatching(/Temporary FFmpeg process [0-9]+ exited with error code 1/),
+        code: expect.any(Number),
+        stack: expect.any(String),
+        stderr: expect.arrayContaining([expect.stringContaining('badfilter')]),
+      }));
     }
     await processManager.shutdown();
   });
@@ -54,9 +56,7 @@ describe('FFmpeg Process Manager Temporary Process', () => {
     const processes = await processManager.getFFmpegProcesses();
     expect(allFFmpegProcesses.size).toEqual(1);
     expect(processes.size).toEqual(0);
-    const stderr = await temporaryProcessPromise;
-    expect(stderr).toBeInstanceOf(Array);
-    expect(stderr.length).toEqual(0);
+    await temporaryProcessPromise;
     await processManager.shutdown();
   });
 });

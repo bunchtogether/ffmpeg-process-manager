@@ -25,7 +25,28 @@ describe('FFprobe', () => {
       '-f', 'mpegts',
       '-i', 'udp://127.0.0.1:2222',
     ];
-    await startFFprobe(args);
+    const data = await startFFprobe(args);
+    expect(data).toEqual(expect.objectContaining({
+      streams: expect.arrayContaining([expect.objectContaining({
+        index: expect.any(Number),
+        codec_name: expect.any(String),
+        codec_long_name: expect.any(String),
+        profile: expect.any(String),
+        codec_type: expect.any(String),
+        codec_time_base: expect.any(String),
+        codec_tag_string: expect.any(String),
+        codec_tag: expect.any(String),
+      })]),
+      format: expect.objectContaining({
+        filename: expect.any(String),
+        nb_streams: expect.any(Number),
+        nb_programs: expect.any(Number),
+        format_name: expect.any(String),
+        format_long_name: expect.any(String),
+        start_time: expect.any(String),
+        probe_score: expect.any(Number),
+      }),
+    }));
   });
 
   test('Should fail to probe stream which does not exist', async () => {
@@ -37,11 +58,13 @@ describe('FFprobe', () => {
       await startFFprobe(args);
     } catch (error) {
       expect(error).toBeInstanceOf(FFprobeProcessError);
-      expect(error.message).toEqual(expect.stringMatching(/FFprobe process [0-9]+ exited with error code 1 and internal error code -5: Input\/output error/));
-      expect(error.code).toEqual(-5);
-      expect(error.stack).toBeDefined();
-      expect(error.stdout).toBeDefined();
-      expect(error.stderr.length).toEqual(0);
+      expect(error).toEqual(expect.objectContaining({
+        message: expect.stringMatching(/FFprobe process [0-9]+ exited with error code 1 and internal error code [-0-9]+: .*/),
+        code: expect.any(Number),
+        stack: expect.any(String),
+        stdout: expect.any(Object),
+        stderr: [],
+      }));
     }
   });
 });
