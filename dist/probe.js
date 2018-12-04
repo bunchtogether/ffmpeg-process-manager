@@ -27,7 +27,7 @@ addShutdownHandler(shutdown, (error      ) => {
 
 module.exports.shutdownFFprobe = shutdown;
 
-module.exports.startFFprobe = async (args              )                        => {
+module.exports.startFFprobe = async (args              )                 => {
   const combinedArgs = ['-v', 'quiet', '-print_format', 'json', '-show_format', '-show_streams', '-show_error'].concat(args);
   if (combinedArgs.indexOf('-timeout') === -1) {
     combinedArgs.unshift('10');
