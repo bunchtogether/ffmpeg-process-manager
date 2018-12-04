@@ -1,6 +1,6 @@
 // @flow
 
-// const expect = require('expect');
+const expect = require('expect');
 const { FFmpegProcessManager, FFprobeProcessError, startFFprobe, shutdownFFprobe } = require('../src');
 const testArgs = require('./lib/test-args');
 
