@@ -3,7 +3,7 @@
 const { ffmpegPath } = require('ffmpeg-static');
 const { spawn } = require('child_process');
 const stringify = require('json-stringify-deterministic');
-const farmhash = require('farmhash');
+const murmurHash3 = require('murmurhash3js');
 const fs = require('fs-extra');
 const path = require('path');
 const os = require('os');
@@ -348,7 +348,8 @@ class FFmpegProcessManager extends EventEmitter {
   }
 
   getId(args              ) {
-    return farmhash.hash32(stringify(args)).toString(36);
+    const hashedId = murmurHash3.x64.hash128(stringify(args));
+    return `${hashedId.slice(0, 8)}-${hashedId.slice(8, 12)}-${hashedId.slice(12, 16)}-${hashedId.slice(16, 20)}-${hashedId.slice(20)}`;
   }
 
   getProgressOutputPath(args              ) {
