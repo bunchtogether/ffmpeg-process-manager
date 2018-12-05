@@ -55,9 +55,9 @@
     "pre-commit": "^1.2.2"
   },
   "dependencies": {
-    "exit-handler": "https://github.com/bunchtogether/exit-handler.git#master",
     "colors": "^1.3.2",
     "command-exists": "^1.2.8",
+    "exit-handler": "https://github.com/bunchtogether/exit-handler.git#master",
     "farmhash": "^2.1.0",
     "ffmpeg-static": "https://github.com/bunchtogether/ffmpeg-static.git#master",
     "fs-extra": "^7.0.1",
