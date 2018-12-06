@@ -1,6 +1,6 @@
 //      
 
-const { ffmpegPath } = require('ffmpeg-static');
+const { ffmpegPath } = require('@bunchtogether/ffmpeg-static');
 const { spawn } = require('child_process');
 const stringify = require('json-stringify-deterministic');
 const murmurHash3 = require('murmurhash3js');
@@ -8,7 +8,7 @@ const fs = require('fs-extra');
 const path = require('path');
 const os = require('os');
 const EventEmitter = require('events');
-const { addShutdownHandler } = require('exit-handler');
+const { addShutdownHandler } = require('@bunchtogether/exit-handler');
 const ps = require('ps-node');
 const logger = require('./lib/logger')('FFmpeg Process Manager');
 const pidusage = require('pidusage');

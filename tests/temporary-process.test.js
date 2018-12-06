@@ -1,7 +1,7 @@
 // @flow
 
 const expect = require('expect');
-const { ffmpegPath } = require('ffmpeg-static');
+const { ffmpegPath } = require('@bunchtogether/ffmpeg-static');
 const ps = require('ps-node');
 const { FFmpegProcessManager, TemporaryFFmpegProcessError } = require('../src');
 

@@ -2,8 +2,8 @@
 
 const logger = require('./lib/logger')('FFmpeg Process Manager (FFprobe)');
 const { spawn } = require('child_process');
-const { addShutdownHandler } = require('exit-handler');
-const { ffprobePath } = require('ffmpeg-static');
+const { addShutdownHandler } = require('@bunchtogether/exit-handler');
+const { ffprobePath } = require('@bunchtogether/ffmpeg-static');
 const FFprobeProcessError = require('./lib/ffprobe-process-error');
 const killProcess = require('./lib/kill-process');
 
