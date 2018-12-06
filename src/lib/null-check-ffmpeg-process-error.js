@@ -1,6 +1,6 @@
 // @flow
 
-class TemporaryFFmpegProcessError extends Error {
+class NullCheckFFmpegProcessError extends Error {
   code:number;
   stderr:Array<string>;
 
@@ -13,4 +13,4 @@ class TemporaryFFmpegProcessError extends Error {
   }
 }
 
-module.exports = TemporaryFFmpegProcessError;
+module.exports = NullCheckFFmpegProcessError;

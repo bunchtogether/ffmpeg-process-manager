@@ -15,6 +15,7 @@ const pidusage = require('pidusage');
 const commandExists = require('command-exists');
 const mergeAsyncCalls = require('./lib/merge-async-calls');
 const TemporaryFFmpegProcessError = require('./lib/temporary-ffmpeg-process-error');
+const NullCheckFFmpegProcessError = require('./lib/null-check-ffmpeg-process-error');
 const killProcess = require('./lib/kill-process');
 
 
@@ -500,6 +501,78 @@ class FFmpegProcessManager extends EventEmitter {
     }
     await this.start(args);
     logger.warn(`Restarted process with ID ${id}`);
+  }
+
+  async startNullCheck(args:Array<string>):Promise<void> {
+    const duration = 5000;
+    const progressOutputPath = this.getProgressOutputPath(args);
+    await fs.ensureFile(progressOutputPath);
+    const combinedArgs = ['-v', 'error', '-nostats', '-progress', `${progressOutputPath}`].concat(args, ['-metadata', 'temporary_process="1"', '-f', 'null', '-']);
+    const mainProcess = spawn(ffmpegPath, combinedArgs, {
+      windowsHide: true,
+      shell: false,
+      detached: false,
+    });
+    this.tempPids.add(mainProcess.pid);
+    logger.info(`Started null check FFmpeg process ${mainProcess.pid} for ${duration}ms`);
+    let watcherOpen = true;
+    let initialChange = true;
+    const watcher = fs.watch(progressOutputPath, async (event) => {
+      if (initialChange) {
+        initialChange = false;
+        return;
+      }
+      if (event === 'change') {
+        killProcess(mainProcess.pid, 'null check FFmpeg process');
+        watcherOpen = false;
+        watcher.close();
+      }
+    });
+    const promise = new Promise((resolve, reject) => {
+      let stderr = [];
+      const timeout = setTimeout(() => {
+        killProcess(mainProcess.pid, 'null check FFmpeg process');
+      }, duration);
+      mainProcess.stderr.on('data', (data) => {
+        const message = data.toString('utf8').trim().split('\n').map((line) => line.trim());
+        message.forEach((line) => logger.error(`\t${line.trim()}`));
+        stderr = stderr.concat(message);
+      });
+      mainProcess.once('error', async (error) => {
+        clearTimeout(timeout);
+        reject(error);
+      });
+      mainProcess.once('close', async (code) => {
+        clearTimeout(timeout);
+        if (code && code !== 255) {
+          const message = `Null check FFmpeg process ${mainProcess.pid} exited with error code ${code}`;
+          logger.error(message);
+          logger.error(`\tArguments: ${args.join(' ')}`);
+          reject(new NullCheckFFmpegProcessError(message, code, stderr));
+        } else if (stderr.length > 0) {
+          const message = `Null check FFmpeg process ${mainProcess.pid} exited with error code ${code} but contained errors`;
+          logger.error(message);
+          logger.error(`\tArguments: ${args.join(' ')}`);
+          reject(new NullCheckFFmpegProcessError(message, code, stderr));
+        } else {
+          resolve();
+        }
+      });
+    });
+    promise.then(() => {
+      if (watcherOpen) {
+        watcherOpen = false;
+        watcher.close();
+      }
+      this.tempPids.delete(mainProcess.pid);
+    }).catch(() => {
+      if (watcherOpen) {
+        watcherOpen = false;
+        watcher.close();
+      }
+      this.tempPids.delete(mainProcess.pid);
+    });
+    return promise;
   }
 
   async startTemporary(args:Array<string>, duration:number):Promise<void> {
