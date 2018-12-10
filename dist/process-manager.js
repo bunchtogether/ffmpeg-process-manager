@@ -205,18 +205,22 @@ class FFmpegProcessManager extends EventEmitter {
       return Promise.resolve(new Map());
     }
     return new Promise((resolve, reject) => {
+      const usage = new Map();
       pidusage(pids, (error, stats) => {
         if (error) {
           if (error.message === 'No maching pid found') {
             logger.warn(`Matching PID was not found on CPU and memory usage lookup for ${pids.toString()}`);
-            resolve(new Map());
+            resolve(usage);
           } else {
             reject(error);
           }
         } else {
-          const usage = new Map();
           Object.keys(stats).forEach((pid) => {
             const s = stats[pid];
+            if (!s) {
+              logger.warn(`Unable to get memory usage for process ${pid}, pidusage returned: ${JSON.stringify(stats)}`);
+              return;
+            }
             usage.set(parseInt(pid, 10), { cpu: s.cpu, memory: s.memory });
           });
           resolve(usage);
