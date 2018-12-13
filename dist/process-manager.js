@@ -74,6 +74,7 @@ class FFmpegProcessManager extends EventEmitter {
   init() {
     if (!this.ready) {
       this.ready = (async () => {
+        this.isShuttingDown = false;
         try {
           switch (this.platform) {
             case 'linux':
@@ -163,7 +164,6 @@ class FFmpegProcessManager extends EventEmitter {
     this.ids = new Map();
     this.tempPids = new Set();
     this.closeHandlers = new Map();
-    this.isShuttingDown = false;
   }
 
   async updateStatus() {
