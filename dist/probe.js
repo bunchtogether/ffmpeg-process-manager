@@ -29,7 +29,12 @@ module.exports.shutdownFFprobe = shutdown;
 
 module.exports.startFFprobe = async (args              )                 => {
   const combinedArgs = ['-v', 'quiet', '-print_format', 'json', '-show_format', '-show_streams', '-show_error'].concat(args);
-  if (args.indexOf('-timeout') === -1 && args.indexOf('lavfi') === -1) {
+  const captureCardRegexList = ['/dev/video', 'hw:'];
+  const isCaptureCardPath = !!captureCardRegexList.find((rx) => {
+    const result = args.filter((arg) => arg.includes(rx));
+    return result.length > 0;
+  });
+  if (args.indexOf('-timeout') === -1 && args.indexOf('lavfi') === -1 && !isCaptureCardPath) {
     combinedArgs.unshift('10');
     combinedArgs.unshift('-timeout');
   }
