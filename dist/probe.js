@@ -32,7 +32,7 @@ const getFFprobePath = (useSystemBinary          ) => {
     // eslint-disable-next-line global-require
     const { ffprobeSystemPath } = require('@bunchtogether/ffmpeg-static');
     if (!ffprobeSystemPath) {
-      throw new Error('ffmpeg binary not installed globally');
+      throw new Error('ffprobe binary is either not installed on this system or available globally');
     }
     return ffprobeSystemPath;
   }

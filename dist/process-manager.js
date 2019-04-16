@@ -36,7 +36,7 @@ const getFFmpegPath = (useSystemBinary          ) => {
     // eslint-disable-next-line global-require
     const { ffmpegSystemPath } = require('@bunchtogether/ffmpeg-static');
     if (!ffmpegSystemPath) {
-      throw new Error('ffmpeg binary not installed globally');
+      throw new Error('ffmpeg binary is either not installed on this system or available globally');
     }
     return ffmpegSystemPath;
   }
