@@ -16,7 +16,7 @@ const shutdown = async () => {
   pids = new Set();
 };
 
-addShutdownHandler(shutdown, (error      ) => {
+addShutdownHandler(shutdown, (error       ) => {
   if (error.stack) {
     logger.error('Error during shutdown:');
     error.stack.split('\n').forEach((line) => logger.error(`\t${line.trim()}`));
@@ -27,13 +27,26 @@ addShutdownHandler(shutdown, (error      ) => {
 
 module.exports.shutdownFFprobe = shutdown;
 
-module.exports.startFFprobe = async (args              )                 => {
+const getFFprobePath = (useSystemBinary          ) => {
+  if (useSystemBinary) {
+    // eslint-disable-next-line global-require
+    const { ffprobeSystemPath } = require('@bunchtogether/ffmpeg-static');
+    if (!ffprobeSystemPath) {
+      throw new Error('ffmpeg binary not installed globally');
+    }
+    return ffprobeSystemPath;
+  }
+  return ffprobePath;
+};
+
+module.exports.startFFprobe = async (args               , useSystemBinary           = false)                  => {
   const combinedArgs = ['-v', 'quiet', '-print_format', 'json', '-show_format', '-show_streams', '-show_error'].concat(args);
   if (args.indexOf('-timeout') === -1 && args.indexOf('lavfi') === -1) {
     combinedArgs.unshift('10');
     combinedArgs.unshift('-timeout');
   }
-  const mainProcess = spawn(ffprobePath, combinedArgs, {
+  const ffprobeBinaryPath = getFFprobePath(useSystemBinary);
+  const mainProcess = spawn(ffprobeBinaryPath, combinedArgs, {
     windowsHide: true,
     shell: false,
     detached: false,
