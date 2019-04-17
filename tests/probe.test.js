@@ -94,4 +94,33 @@ describe('FFprobe', () => {
       }),
     }));
   });
+
+  test('Should not fail on test stream probe with system ffprobe binary', async () => {
+    const args = [
+      '-f', 'lavfi',
+      '-i', 'testsrc=rate=30:size=1920x1080,format=yuv420p',
+    ];
+    const useSystemBinary = true;
+    const data = await startFFprobe(args, useSystemBinary);
+    expect(data).toEqual(expect.objectContaining({
+      streams: expect.arrayContaining([expect.objectContaining({
+        index: expect.any(Number),
+        codec_name: expect.any(String),
+        codec_long_name: expect.any(String),
+        codec_type: expect.any(String),
+        codec_time_base: expect.any(String),
+        codec_tag_string: expect.any(String),
+        codec_tag: expect.any(String),
+      })]),
+      format: expect.objectContaining({
+        filename: expect.any(String),
+        nb_streams: expect.any(Number),
+        nb_programs: expect.any(Number),
+        format_name: expect.any(String),
+        format_long_name: expect.any(String),
+        start_time: expect.any(String),
+        probe_score: expect.any(Number),
+      }),
+    }));
+  });
 });

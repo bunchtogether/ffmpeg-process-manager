@@ -20,7 +20,8 @@ const killProcess = require('./lib/kill-process');
 
 
 type OptionsType = {
-  updateIntervalSeconds?: number
+  updateIntervalSeconds?: number,
+  useSystemBinary?: boolean,
 };
 
 type StartOptionsType = {
@@ -30,24 +31,38 @@ type StartOptionsType = {
 
 const nethogsRegex = /([0-9]+)\/[0-9]+\t([0-9.]+)\t([0-9.]+)/g;
 
+const getFFmpegPath = (useSystemBinary?: boolean) => {
+  if (useSystemBinary) {
+    // eslint-disable-next-line global-require
+    const { ffmpegSystemPath } = require('@bunchtogether/ffmpeg-static');
+    if (!ffmpegSystemPath) {
+      throw new Error('ffmpeg binary is either not installed on this system or available globally');
+    }
+    return ffmpegSystemPath;
+  }
+  return ffmpegPath;
+};
+
 class FFmpegProcessManager extends EventEmitter {
   ready: Promise<void>;
   outputPath: string;
   networkUsageProcess: child_process$ChildProcess; // eslint-disable-line camelcase
-  networkUsage: Map<number, {bitrateIn: number, bitrateOut: number}>;
-  progress: Map<string, {fps: number, bitrate: number, speed: number}>;
+  networkUsage: Map<number, { bitrateIn: number, bitrateOut: number }>;
+  progress: Map<string, { fps: number, bitrate: number, speed: number }>;
   interval: IntervalID;
   updateIntervalSeconds: number;
+  useSystemBinary: boolean;
+  ffmpegPath: string;
   pids: Map<number, string>;
   ids: Map<string, number>;
   tempPids: Set<number>;
-  keepAlive: Map<string, { attempt: number, args:Array<string> }>;
+  keepAlive: Map<string, { attempt: number, args: Array<string> }>;
   isShuttingDown: boolean;
   platform: string;
   closeHandlers: Map<string, Array<() => Promise<void> | void>>;
   start: (Array<string>, ?StartOptionsType) => Promise<[string, number]>;
 
-  constructor(options?:OptionsType = {}) {
+  constructor(options ?: OptionsType = {}) {
     super();
     this.isShuttingDown = false;
     this.outputPath = path.resolve(path.join(os.tmpdir(), 'node-ffmpeg-process-manager'));
@@ -55,13 +70,15 @@ class FFmpegProcessManager extends EventEmitter {
     this.progress = new Map();
     this.keepAlive = new Map();
     this.updateIntervalSeconds = options.updateIntervalSeconds || 10;
+    this.useSystemBinary = options.useSystemBinary || false;
+    this.ffmpegPath = getFFmpegPath(this.useSystemBinary);
     this.pids = new Map();
     this.ids = new Map();
     this.tempPids = new Set();
     this.platform = os.platform();
     this.closeHandlers = new Map();
     this.start = mergeAsyncCalls(this._start.bind(this)); // eslint-disable-line  no-underscore-dangle
-    addShutdownHandler(this.shutdown.bind(this), (error:Error) => {
+    addShutdownHandler(this.shutdown.bind(this), (error: Error) => {
       if (error.stack) {
         logger.error('Error during shutdown:');
         error.stack.split('\n').forEach((line) => logger.error(`\t${line.trim()}`));
@@ -200,7 +217,7 @@ class FFmpegProcessManager extends EventEmitter {
     }
   }
 
-  getCpuAndMemoryUsage(pids:Array<number>):Promise<Map<number, {cpu: number, memory: number}>> {
+  getCpuAndMemoryUsage(pids: Array<number>): Promise < Map < number, { cpu: number, memory: number } >> {
     if (pids.length === 0) {
       return Promise.resolve(new Map());
     }
@@ -229,15 +246,15 @@ class FFmpegProcessManager extends EventEmitter {
     });
   }
 
-  getFFmpegProcesses():Promise<Map<number, Array<string>>> {
+  getFFmpegProcesses(): Promise < Map < number, Array < string >>> {
     return new Promise((resolve, reject) => {
-      ps.lookup({ command: ffmpegPath }, (error, resultList) => {
+      ps.lookup({ command: this.ffmpegPath }, (error, resultList) => {
         if (error) {
           reject(error);
         } else {
           const processes = new Map();
           resultList.forEach((result) => {
-            // Remove the "-v quiet -nostats -progress" args
+          // Remove the "-v quiet -nostats -progress" args
             if (result.arguments && result.arguments.indexOf('temporary_process="1"') === -1) {
               processes.set(parseInt(result.pid, 10), result.arguments.slice(5));
             }
@@ -342,7 +359,7 @@ class FFmpegProcessManager extends EventEmitter {
     this.networkUsageProcess = networkUsageProcess;
   }
 
-  async cleanupJob(id:string) {
+  async cleanupJob(id: string) {
     const pid = this.ids.get(id);
     if (!pid) {
       return;
@@ -352,22 +369,22 @@ class FFmpegProcessManager extends EventEmitter {
     await this.runCloseHandlers(id);
   }
 
-  getId(args:Array<string>) {
+  getId(args: Array<string>) {
     const hashedId = murmurHash3.x64.hash128(stringify(args));
     return `${hashedId.slice(0, 8)}-${hashedId.slice(8, 12)}-${hashedId.slice(12, 16)}-${hashedId.slice(16, 20)}-${hashedId.slice(20)}`;
   }
 
-  getProgressOutputPath(args:Array<string>) {
+  getProgressOutputPath(args: Array<string>) {
     const id = this.getId(args);
     return path.resolve(path.join(this.outputPath, `${id}.log`));
   }
 
-  getErrorOutputPath(args:Array<string>) {
+  getErrorOutputPath(args: Array<string>) {
     const id = this.getId(args);
     return path.resolve(path.join(this.outputPath, `${id}.err`));
   }
 
-  async checkIfProcessIsUpdating(args:Array<string>) {
+  async checkIfProcessIsUpdating(args: Array<string>) {
     const progressOutputPath = this.getProgressOutputPath(args);
     await fs.ensureFile(progressOutputPath);
     return new Promise((resolve) => {
@@ -385,7 +402,7 @@ class FFmpegProcessManager extends EventEmitter {
     });
   }
 
-  async startWatchingProgressOutput(id:string, progressOutputPath: string) {
+  async startWatchingProgressOutput(id: string, progressOutputPath: string) {
     await fs.ensureFile(progressOutputPath);
     let lastSize = (await fs.stat(progressOutputPath)).size;
     let previousData = {
@@ -448,7 +465,7 @@ class FFmpegProcessManager extends EventEmitter {
     return () => close();
   }
 
-  async startWatchingErrorOutput(id:string, errorOutputPath: string) {
+  async startWatchingErrorOutput(id: string, errorOutputPath: string) {
     await fs.ensureFile(errorOutputPath);
     let lastSize = (await fs.stat(errorOutputPath)).size;
     const watcher = fs.watch(errorOutputPath, async (event) => {
@@ -490,7 +507,7 @@ class FFmpegProcessManager extends EventEmitter {
     return () => close();
   }
 
-  async restart(id:string) {
+  async restart(id: string) {
     const keepAliveData = this.keepAlive.get(id);
     if (!keepAliveData) {
       return;
@@ -507,12 +524,12 @@ class FFmpegProcessManager extends EventEmitter {
     logger.warn(`Restarted process with ID ${id}`);
   }
 
-  async startNullCheck(args:Array<string>):Promise<void> {
+  async startNullCheck(args: Array<string>): Promise < void> {
     const duration = 5000;
     const progressOutputPath = this.getProgressOutputPath(args);
     await fs.ensureFile(progressOutputPath);
     const combinedArgs = ['-v', 'error', '-nostats', '-progress', `${progressOutputPath}`].concat(args, ['-metadata', 'temporary_process="1"', '-f', 'null', '-']);
-    const mainProcess = spawn(ffmpegPath, combinedArgs, {
+    const mainProcess = spawn(this.ffmpegPath, combinedArgs, {
       windowsHide: true,
       shell: false,
       detached: false,
@@ -579,9 +596,9 @@ class FFmpegProcessManager extends EventEmitter {
     return promise;
   }
 
-  async startTemporary(args:Array<string>, duration:number):Promise<void> {
+  async startTemporary(args: Array < string >, duration: number): Promise < void> {
     const combinedArgs = ['-v', 'error', '-nostats'].concat(args, ['-metadata', 'temporary_process="1"']);
-    const mainProcess = spawn(ffmpegPath, combinedArgs, {
+    const mainProcess = spawn(this.ffmpegPath, combinedArgs, {
       windowsHide: true,
       shell: false,
       detached: false,
@@ -627,13 +644,13 @@ class FFmpegProcessManager extends EventEmitter {
     return promise;
   }
 
-  async startProcess(args:Array<string>):Promise<child_process$ChildProcess> { // eslint-disable-line camelcase
+  async startProcess(args: Array<string>): Promise < child_process$ChildProcess > { // eslint-disable-line camelcase
     const id = this.getId(args);
     const progressOutputPath = this.getProgressOutputPath(args);
     const combinedArgs = ['-v', 'error', '-nostats', '-progress', `${progressOutputPath}`].concat(args);
     const errorOutputPath = this.getErrorOutputPath(args);
     const stdErrFileDescriptor = await fs.open(errorOutputPath, 'a');
-    const mainProcess = spawn(ffmpegPath, combinedArgs, {
+    const mainProcess = spawn(this.ffmpegPath, combinedArgs, {
       windowsHide: true,
       shell: false,
       detached: true,
@@ -652,7 +669,7 @@ class FFmpegProcessManager extends EventEmitter {
     return mainProcess;
   }
 
-  async _start(args:Array<string>, options?:StartOptionsType = {}) {
+  async _start(args: Array < string >, options ?: StartOptionsType = {}) {
     if (!options.skipInit) {
       await this.init();
     }
@@ -711,7 +728,7 @@ class FFmpegProcessManager extends EventEmitter {
     return [id, pid];
   }
 
-  async runCloseHandlers(id:string) {
+  async runCloseHandlers(id: string) {
     const handlers = this.closeHandlers.get(id);
     if (!handlers) {
       return;
@@ -723,13 +740,13 @@ class FFmpegProcessManager extends EventEmitter {
     this.emit('close', id);
   }
 
-  addCloseHandler(id:string, handler:() => Promise<void> | void) {
+  addCloseHandler(id: string, handler: () => Promise<void> | void) {
     const handlers = this.closeHandlers.get(id) || [];
     handlers.push(handler);
     this.closeHandlers.set(id, handlers);
   }
 
-  async stop(id:string) {
+  async stop(id: string) {
     this.keepAlive.delete(id);
     const processesBeforeClose = await this.getFFmpegProcesses();
     const pids = new Set();

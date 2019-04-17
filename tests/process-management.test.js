@@ -1,6 +1,7 @@
 // @flow
 
 const expect = require('expect');
+const { ffmpegPath, ffmpegSystemPath } = require('@bunchtogether/ffmpeg-static');
 const { FFmpegProcessManager } = require('../src');
 const { waitForClose, waitForStatus } = require('./lib/events');
 const testArgs = require('./lib/test-args');
@@ -53,6 +54,28 @@ describe('FFmpeg Process Manager Process Management', () => {
     const closePromise2 = waitForClose(processManager, ffmpegJobId);
     await processManager.stop(ffmpegJobId);
     await closePromise2;
+    await processManager.shutdown();
+  });
+
+  test('Should not use system binaries to start process', async () => {
+    const processManager = new FFmpegProcessManager({ updateIntervalSeconds: 1, useSystemBinary: false });
+    expect(processManager.ffmpegPath).toEqual(ffmpegPath);
+    const [ffmpegJobId, ffmpegJobPid] = await processManager.start(testArgs); // eslint-disable-line no-unused-vars
+    await waitForStatus(processManager, ffmpegJobId);
+    const closePromise = waitForClose(processManager, ffmpegJobId);
+    await processManager.stop(ffmpegJobId);
+    await closePromise;
+    await processManager.shutdown();
+  });
+
+  test('Should use system binaries to start process', async () => {
+    const processManager = new FFmpegProcessManager({ updateIntervalSeconds: 1, useSystemBinary: true });
+    expect(processManager.ffmpegPath).toEqual(ffmpegSystemPath);
+    const [ffmpegJobId, ffmpegJobPid] = await processManager.start(testArgs); // eslint-disable-line no-unused-vars
+    await waitForStatus(processManager, ffmpegJobId);
+    const closePromise = waitForClose(processManager, ffmpegJobId);
+    await processManager.stop(ffmpegJobId);
+    await closePromise;
     await processManager.shutdown();
   });
 });
