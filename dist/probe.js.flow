@@ -41,7 +41,7 @@ const getFFprobePath = (useSystemBinary?: boolean) => {
 
 module.exports.startFFprobe = async (args: Array<string>, useSystemBinary?: boolean = false): Promise<Object> => {
   const combinedArgs = ['-v', 'quiet', '-print_format', 'json', '-show_format', '-show_streams', '-show_error'].concat(args);
-  const captureCardRegexList = ['/dev/video', 'hw:'];
+  const captureCardRegexList = ['/dev/video', 'audiorec:'];
   const isCaptureCardPath = !!captureCardRegexList.find((rx) => {
     const result = args.filter((arg) => arg.includes(rx));
     return result.length > 0;
