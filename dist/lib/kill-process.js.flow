@@ -18,7 +18,7 @@ const checkIfProcessExists = (pid:number): Promise<boolean> => new Promise((reso
 module.exports = async (pid:number, name:string) => {
   let processExists = await checkIfProcessExists(pid);
   const exitPromise = new Promise(async (resolve, reject) => {
-    for (let i = 0; i < 40; i += 1) {
+    for (let i = 0; i < 60; i += 1) {
       if (!processExists) {
         resolve();
         return;

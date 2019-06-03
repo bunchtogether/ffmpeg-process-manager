@@ -312,7 +312,7 @@ class FFmpegProcessManager extends EventEmitter {
         logger.error(`Network usage process monitor exited with error code ${code}`);
       }
       if (!this.isShuttingDown) {
-        logger.error('Restarting network usage process');
+        logger.warn('Restarting network usage process after close');
         await new Promise((resolve) => setTimeout(resolve, 1000));
         this.monitorProcessNetworkUsage();
       }
@@ -751,18 +751,8 @@ class FFmpegProcessManager extends EventEmitter {
     const processesBeforeClose = await this.getFFmpegProcesses();
     const pids = new Set();
     const mainPid = this.ids.get(id);
-    let closePromise;
     if (mainPid) {
       pids.add(mainPid);
-      closePromise = new Promise((resolve, reject) => {
-        const timeout = setTimeout(() => {
-          reject(new Error(`Timeout on close event for FFmpeg process ${mainPid} with ID ${id}`));
-        }, 20000);
-        this.addCloseHandler(id, () => {
-          clearTimeout(timeout);
-          resolve();
-        });
-      });
     }
     for (const [ffmpegProcessId, ffmpegArgs] of processesBeforeClose) {
       if (id === this.getId(ffmpegArgs)) {
@@ -771,13 +761,6 @@ class FFmpegProcessManager extends EventEmitter {
     }
     await Promise.all([...pids].map((pid) => killProcess(pid, 'FFmpeg')));
     await this.cleanupJob(id);
-    if (closePromise) {
-      try {
-        await closePromise;
-      } catch (error) {
-        logger.error(error.message);
-      }
-    }
   }
 }
 
