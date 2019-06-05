@@ -38,7 +38,6 @@ const killProcessWithHandle = async (pid:number, name:string) => {
     if (childHandle.stdin) {
       childHandle.stdin.pause();
     }
-    console.log('killProcessWithHandle', pid, name);
     childHandle.kill();
   }
   return killProcess(pid, name);
