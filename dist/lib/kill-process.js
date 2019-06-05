@@ -4,7 +4,7 @@ const ps = require('ps-node');
 const logger = require('./logger')('FFmpeg Process Manager');
 
 const checkIfProcessExists = (pid       )                   => new Promise((resolve, reject) => {
-  ps.lookup({ pid }, (error, resultList) => {
+  ps.lookup({ pid, psargs: 'ux' }, (error, resultList) => {
     if (error) {
       reject(error);
     } else if (resultList.length > 0) {

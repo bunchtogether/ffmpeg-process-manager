@@ -29,6 +29,21 @@ type StartOptionsType = {
   skipRestart?: boolean
 };
 
+const childHandles = {};
+
+const killProcessWithHandle = async (pid:number, name:string) => {
+  const childHandle = childHandles[pid];
+  delete childHandles[pid];
+  if (childHandle) {
+    if (childHandle.stdin) {
+      childHandle.stdin.pause();
+    }
+    console.log('killProcessWithHandle', pid, name);
+    childHandle.kill();
+  }
+  return killProcess(pid, name);
+};
+
 const nethogsRegex = /([0-9]+)\/[0-9]+\t([0-9.]+)\t([0-9.]+)/g;
 
 const getFFmpegPath = (useSystemBinary?: boolean) => {
@@ -156,7 +171,7 @@ class FFmpegProcessManager extends EventEmitter {
     for (const [pid, args] of processes) {
       const id = this.getId(args);
       if (map.get(id) !== pid) {
-        await killProcess(pid, 'redundant FFmpeg process');
+        await killProcessWithHandle(pid, 'redundant FFmpeg process');
       }
     }
   }
@@ -171,7 +186,7 @@ class FFmpegProcessManager extends EventEmitter {
     if (this.networkUsageProcess) {
       pidsToKill.push([this.networkUsageProcess.pid, 'network usage monitoring']);
     }
-    await Promise.all(pidsToKill.map(([pid, name]) => killProcess(pid, name)));
+    await Promise.all(pidsToKill.map(([pid, name]) => killProcessWithHandle(pid, name)));
     logger.info('Shut down');
     delete this.ready;
     this.networkUsage = new Map();
@@ -279,6 +294,7 @@ class FFmpegProcessManager extends EventEmitter {
       windowsHide: true,
       shell: false,
     });
+    childHandles[networkUsageProcess.pid] = networkUsageProcess;
     let lastUpdate = Date.now();
     networkUsageProcess.stdout.on('data', (data) => {
       const networkUsage = new Map();
@@ -308,6 +324,7 @@ class FFmpegProcessManager extends EventEmitter {
       logger.error(error.message);
     });
     networkUsageProcess.once('close', async (code) => {
+      delete childHandles[networkUsageProcess.pid];
       if (code && code !== 0) {
         logger.error(`Network usage process monitor exited with error code ${code}`);
       }
@@ -325,6 +342,7 @@ class FFmpegProcessManager extends EventEmitter {
       windowsHide: true,
       shell: false,
     });
+    childHandles[networkUsageProcess.pid] = networkUsageProcess;
     networkUsageProcess.stdout.on('data', (data) => {
       const networkUsage = new Map();
       data.toString('utf8').split('\n').forEach((line) => {
@@ -347,6 +365,7 @@ class FFmpegProcessManager extends EventEmitter {
       logger.error(error.message);
     });
     networkUsageProcess.once('close', async (code) => {
+      delete childHandles[networkUsageProcess.pid];
       if (code && code !== 0) {
         logger.error(`Network usage process monitor exited with error code ${code}`);
       }
@@ -534,6 +553,7 @@ class FFmpegProcessManager extends EventEmitter {
       shell: false,
       detached: false,
     });
+    childHandles[mainProcess.pid] = mainProcess;
     this.tempPids.add(mainProcess.pid);
     logger.info(`Started null check FFmpeg process ${mainProcess.pid} for ${duration}ms`);
     let watcherOpen = true;
@@ -552,7 +572,7 @@ class FFmpegProcessManager extends EventEmitter {
     const promise = new Promise((resolve, reject) => {
       let stderr = [];
       const timeout = setTimeout(() => {
-        killProcess(mainProcess.pid, 'null check FFmpeg process');
+        killProcessWithHandle(mainProcess.pid, 'null check FFmpeg process');
       }, duration);
       mainProcess.stderr.on('data', (data) => {
         const message = data.toString('utf8').trim().split('\n').map((line) => line.trim());
@@ -564,6 +584,7 @@ class FFmpegProcessManager extends EventEmitter {
         reject(error);
       });
       mainProcess.once('close', async (code) => {
+        delete childHandles[mainProcess.pid];
         clearTimeout(timeout);
         if (code && code !== 255) {
           const message = `Null check FFmpeg process ${mainProcess.pid} exited with error code ${code}`;
@@ -603,12 +624,13 @@ class FFmpegProcessManager extends EventEmitter {
       shell: false,
       detached: false,
     });
+    childHandles[mainProcess.pid] = mainProcess;
     this.tempPids.add(mainProcess.pid);
     logger.info(`Started temporary FFmpeg process ${mainProcess.pid} for ${duration}ms`);
     const promise = new Promise((resolve, reject) => {
       let stderr = [];
       const timeout = setTimeout(() => {
-        killProcess(mainProcess.pid, 'temporary FFmpeg process');
+        killProcessWithHandle(mainProcess.pid, 'temporary FFmpeg process');
       }, duration);
       mainProcess.stderr.on('data', (data) => {
         const message = data.toString('utf8').trim().split('\n').map((line) => line.trim());
@@ -620,6 +642,7 @@ class FFmpegProcessManager extends EventEmitter {
         reject(error);
       });
       mainProcess.once('close', async (code) => {
+        delete childHandles[mainProcess.pid];
         clearTimeout(timeout);
         if (code && code !== 255) {
           const message = `Temporary FFmpeg process ${mainProcess.pid} exited with error code ${code}`;
@@ -656,10 +679,12 @@ class FFmpegProcessManager extends EventEmitter {
       detached: true,
       stdio: ['ignore', 'ignore', stdErrFileDescriptor],
     });
+    childHandles[mainProcess.pid] = mainProcess;
     mainProcess.once('error', async (error) => {
       logger.error(error.message);
     });
     mainProcess.once('close', async (code) => {
+      delete childHandles[mainProcess.pid];
       if (code && code !== 255) {
         logger.error(`FFmpeg process ${mainProcess.pid} with ID ${id} exited with error code ${code}`);
       }
@@ -693,7 +718,7 @@ class FFmpegProcessManager extends EventEmitter {
         if (processIsUpdating) {
           logger.info(`Found updating FFmpeg process ${existingPid} with ID ${id}`);
         } else {
-          await killProcess(existingPid, 'non-updating FFmpeg');
+          await killProcessWithHandle(existingPid, 'non-updating FFmpeg');
         }
         break;
       }
@@ -704,7 +729,7 @@ class FFmpegProcessManager extends EventEmitter {
     const stopWatchingErrorOutput = await this.startWatchingErrorOutput(id, errorOutputPath);
     const pid = existingPid && processIsUpdating ? existingPid : (await this.startProcess(args)).pid;
     if (this.ids.get(id)) {
-      await killProcess(pid, 'FFmpeg process');
+      await killProcessWithHandle(pid, 'FFmpeg process');
       throw new Error(`Conflicting ID ${id} for FFmpeg process ${pid}`);
     }
     this.pids.set(pid, id);
@@ -759,7 +784,7 @@ class FFmpegProcessManager extends EventEmitter {
         pids.add(ffmpegProcessId);
       }
     }
-    await Promise.all([...pids].map((pid) => killProcess(pid, 'FFmpeg')));
+    await Promise.all([...pids].map((pid) => killProcessWithHandle(pid, 'FFmpeg')));
     await this.cleanupJob(id);
   }
 }
