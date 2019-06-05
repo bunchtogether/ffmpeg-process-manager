@@ -66,6 +66,7 @@
     "node-object-hash": "^1.4.1",
     "pidusage": "^2.0.17",
     "ps-node": "^0.1.6",
+    "terminate": "^2.1.2",
     "winston": "^3.1.0"
   }
 }
