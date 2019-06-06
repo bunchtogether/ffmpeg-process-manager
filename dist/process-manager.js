@@ -56,7 +56,7 @@ class FFmpegProcessManager extends EventEmitter {
                             
                            
                         
-                                                                   
+                                                                                  
                           
                    
                                                                 
@@ -512,6 +512,10 @@ class FFmpegProcessManager extends EventEmitter {
     if (!keepAliveData) {
       return;
     }
+    if (keepAliveData.stop) {
+      this.keepAlive.delete(id);
+      return;
+    }
     logger.warn(`Restarting process with ID ${id}`);
     const { attempt, args } = keepAliveData;
     this.keepAlive.set(id, { attempt: attempt + 1, args });
@@ -747,7 +751,11 @@ class FFmpegProcessManager extends EventEmitter {
   }
 
   async stop(id        ) {
-    this.keepAlive.delete(id);
+    const keepAliveData = this.keepAlive.get(id);
+    if (keepAliveData) {
+      const { attempt, args } = keepAliveData;
+      this.keepAlive.set(id, { attempt, args, stop: true });
+    }
     const processesBeforeClose = await this.getFFmpegProcesses();
     const pids = new Set();
     const mainPid = this.ids.get(id);
