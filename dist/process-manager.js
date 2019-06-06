@@ -56,6 +56,7 @@ class FFmpegProcessManager extends EventEmitter {
                    
                                                                 
                                                                          
+                                  
 
   constructor(options                = {}) {
     super();
@@ -71,6 +72,7 @@ class FFmpegProcessManager extends EventEmitter {
     this.tempPids = new Set();
     this.platform = os.platform();
     this.closeHandlers = new Map();
+    this.restartingProcesses = new Set();
     this.start = mergeAsyncCalls(this._start.bind(this)); // eslint-disable-line  no-underscore-dangle
     addShutdownHandler(this.shutdown.bind(this), (error       ) => {
       if (error.stack) {
@@ -380,13 +382,22 @@ class FFmpegProcessManager extends EventEmitter {
       this.keepAlive.delete(id);
       return;
     }
+    if (this.restartingProcesses.has(id)) {
+      return;
+    }
     logger.warn(`Restarting process with ID ${id}`);
+    this.restartingProcesses.add(id);
     const { attempt, args } = keepAliveData;
     this.keepAlive.set(id, { attempt: attempt + 1, args });
     if (attempt < 6) {
       await new Promise((resolve) => setTimeout(resolve, 1000 * attempt * attempt));
     } else {
       await new Promise((resolve) => setTimeout(resolve, 1000 * 36));
+    }
+    this.restartingProcesses.delete(id);
+    if (keepAliveData.stop) {
+      this.keepAlive.delete(id);
+      return;
     }
     await this.start(args);
     logger.warn(`Restarted process with ID ${id}`);
