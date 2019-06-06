@@ -17,27 +17,6 @@ describe('FFmpeg Process Manager Data Output', () => {
     await processManager.shutdown();
   });
 
-  test('Should monitor network usage', async () => {
-    const networkUsage = await new Promise((resolve, reject) => {
-      const handler = (data) => {
-        if (data.size > 0) {
-          processManager.removeListener('networkUsage', handler);
-          processManager.removeListener('error', reject);
-          resolve(data);
-        }
-      };
-      processManager.on('networkUsage', handler);
-      processManager.on('error', reject);
-    });
-    for (const [pid, values] of networkUsage) {
-      expect(pid).toEqual(expect.any(Number));
-      expect(values).toEqual({
-        bitrateIn: expect.any(Number),
-        bitrateOut: expect.any(Number),
-      });
-    }
-  });
-
   test('Should get managed FFmpeg processes', async () => {
     const [ffmpegJobId, ffmpegProcessId] = await processManager.start(testArgs);
     const processes = await processManager.getFFmpegProcesses();
@@ -103,8 +82,6 @@ describe('FFmpeg Process Manager Data Output', () => {
       });
     });
     expect(status).toEqual({
-      bitrateIn: expect.any(Number),
-      bitrateOut: expect.any(Number),
       cpu: expect.any(Number),
       memory: expect.any(Number),
       droppedFrames: expect.any(Number),
@@ -113,31 +90,5 @@ describe('FFmpeg Process Manager Data Output', () => {
       speed: expect.any(Number),
     });
     await processManager.stop(ffmpegJobId);
-  });
-
-  test('Should restart the network usage process if it stops', async () => {
-    await new Promise((resolve, reject) => {
-      const handler = (data) => {
-        if (data.size > 0) {
-          processManager.removeListener('networkUsage', handler);
-          processManager.removeListener('error', reject);
-          resolve(data);
-        }
-      };
-      processManager.on('networkUsage', handler);
-      processManager.on('error', reject);
-    });
-    process.kill(processManager.networkUsageProcess.pid, 'SIGTERM');
-    await new Promise((resolve, reject) => {
-      const handler = (data) => {
-        if (data.size > 0) {
-          processManager.removeListener('networkUsage', handler);
-          processManager.removeListener('error', reject);
-          resolve(data);
-        }
-      };
-      processManager.on('networkUsage', handler);
-      processManager.on('error', reject);
-    });
   });
 });

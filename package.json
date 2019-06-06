@@ -1,6 +1,6 @@
 {
   "name": "@bunchtogether/ffmpeg-process-manager",
-  "version": "1.0.9",
+  "version": "1.0.10",
   "main": "dist/index.js",
   "repository": "https://github.com/bunchtogether/ffmpeg-process-manager.git",
   "author": "johnwehr@bunchtogether.com",
@@ -58,7 +58,6 @@
     "@bunchtogether/exit-handler": "^1.0.0",
     "@bunchtogether/ffmpeg-static": "^1.2.0",
     "colors": "^1.3.2",
-    "command-exists": "^1.2.8",
     "fs-extra": "^7.0.1",
     "json-stringify-deterministic": "^1.0.1",
     "logform": "^1.10.0",

@@ -12,7 +12,6 @@ const { addShutdownHandler } = require('@bunchtogether/exit-handler');
 const ps = require('ps-node');
 const logger = require('./lib/logger')('FFmpeg Process Manager');
 const pidusage = require('pidusage');
-const commandExists = require('command-exists');
 const mergeAsyncCalls = require('./lib/merge-async-calls');
 const TemporaryFFmpegProcessError = require('./lib/temporary-ffmpeg-process-error');
 const NullCheckFFmpegProcessError = require('./lib/null-check-ffmpeg-process-error');
@@ -29,8 +28,6 @@ type StartOptionsType = {
   skipRestart?: boolean
 };
 
-const nethogsRegex = /([0-9]+)\/[0-9]+\t([0-9.]+)\t([0-9.]+)/g;
-
 const getFFmpegPath = (useSystemBinary?: boolean) => {
   if (useSystemBinary) {
     // eslint-disable-next-line global-require
@@ -46,8 +43,6 @@ const getFFmpegPath = (useSystemBinary?: boolean) => {
 class FFmpegProcessManager extends EventEmitter {
   ready: Promise<void>;
   outputPath: string;
-  networkUsageProcess: child_process$ChildProcess; // eslint-disable-line camelcase
-  networkUsage: Map<number, { bitrateIn: number, bitrateOut: number }>;
   progress: Map<string, { fps: number, bitrate: number, speed: number }>;
   interval: IntervalID;
   updateIntervalSeconds: number;
@@ -66,7 +61,6 @@ class FFmpegProcessManager extends EventEmitter {
     super();
     this.isShuttingDown = false;
     this.outputPath = path.resolve(path.join(os.tmpdir(), 'node-ffmpeg-process-manager'));
-    this.networkUsage = new Map();
     this.progress = new Map();
     this.keepAlive = new Map();
     this.updateIntervalSeconds = options.updateIntervalSeconds || 10;
@@ -93,37 +87,8 @@ class FFmpegProcessManager extends EventEmitter {
       this.ready = (async () => {
         this.isShuttingDown = false;
         try {
-          switch (this.platform) {
-            case 'linux':
-              try {
-                await commandExists('unbuffer');
-              } catch (error) {
-                throw new Error('Missing required command \'unbuffer\'');
-              }
-              try {
-                await commandExists('nethogs');
-              } catch (error) {
-                throw new Error('Missing required command \'nethogs\'');
-              }
-              break;
-            case 'darwin':
-              try {
-                await commandExists('unbuffer');
-              } catch (error) {
-                throw new Error('Missing required command \'unbuffer\'');
-              }
-              try {
-                await commandExists('nettop');
-              } catch (error) {
-                throw new Error('Missing required command \'nettop\'');
-              }
-              break;
-            default:
-              throw new Error(`Platform ${this.platform} is not supported`);
-          }
           await fs.ensureDir(this.outputPath);
           await this.cleanupProcesses();
-          await this.monitorProcessNetworkUsage();
           this.interval = setInterval(() => this.updateStatus(), this.updateIntervalSeconds * 1000);
           const processes = await this.getFFmpegProcesses();
           for (const [pid, args] of processes) {
@@ -168,13 +133,9 @@ class FFmpegProcessManager extends EventEmitter {
     this.isShuttingDown = true;
     clearInterval(this.interval);
     const pidsToKill = [...this.tempPids].map((pid) => [pid, 'temporary FFmpeg process']);
-    if (this.networkUsageProcess) {
-      pidsToKill.push([this.networkUsageProcess.pid, 'network usage monitoring']);
-    }
     await Promise.all(pidsToKill.map(([pid, name]) => killProcess(pid, name)));
     logger.info('Shut down');
     delete this.ready;
-    this.networkUsage = new Map();
     this.progress = new Map();
     this.keepAlive = new Map();
     this.pids = new Map();
@@ -201,8 +162,6 @@ class FFmpegProcessManager extends EventEmitter {
     for (const [pid, id] of this.pids) {
       const status = Object.assign(
         {
-          bitrateIn: 0,
-          bitrateOut: 0,
           fps: 0,
           bitrate: 0,
           speed: 0,
@@ -211,7 +170,6 @@ class FFmpegProcessManager extends EventEmitter {
         },
         cpuAndMemoryUsage.get(pid),
         this.progress.get(id),
-        this.networkUsage.get(pid),
       );
       this.emit('status', id, status);
     }
@@ -263,100 +221,6 @@ class FFmpegProcessManager extends EventEmitter {
         }
       });
     });
-  }
-
-  monitorProcessNetworkUsage() {
-    if (this.platform === 'darwin') {
-      return this.monitorProcessNetworkUsageDarwin();
-    } else if (this.platform === 'linux') {
-      return this.monitorProcessNetworkUsageLinux();
-    }
-    throw new Error(`Platform ${this.platform} is not supported`);
-  }
-
-  monitorProcessNetworkUsageDarwin() {
-    const networkUsageProcess = spawn('unbuffer', ['nettop', '-s', this.updateIntervalSeconds.toString(), '-L', '0', '-P', '-d', '-x', '-J', 'bytes_in,bytes_out', '-t', 'external'], {
-      windowsHide: true,
-      shell: false,
-    });
-    let lastUpdate = Date.now();
-    networkUsageProcess.stdout.on('data', (data) => {
-      const networkUsage = new Map();
-      const now = Date.now();
-      const delta = now - lastUpdate;
-      lastUpdate = now;
-      data.toString('utf8').trim().split('\n').forEach((row) => {
-        const columns = row.split(',');
-        if (columns.length < 3) {
-          return;
-        }
-        const pid = columns[0].split('.').pop();
-        if (!pid) {
-          return;
-        }
-        const bitrateIn = Math.round(1000 * 8 * parseInt(columns[1], 10) / delta);
-        const bitrateOut = Math.round(1000 * 8 * parseInt(columns[2], 10) / delta);
-        networkUsage.set(parseInt(pid, 10), { bitrateIn, bitrateOut });
-      });
-      this.networkUsage = networkUsage;
-      this.emit('networkUsage', networkUsage);
-    });
-    networkUsageProcess.stderr.on('data', (data) => {
-      data.toString('utf8').trim().split('\n').forEach((line) => logger.error(line.trim()));
-    });
-    networkUsageProcess.once('error', async (error) => {
-      logger.error(error.message);
-    });
-    networkUsageProcess.once('close', async (code) => {
-      if (code && code !== 0) {
-        logger.error(`Network usage process monitor exited with error code ${code}`);
-      }
-      if (!this.isShuttingDown) {
-        logger.warn('Restarting network usage process after close');
-        await new Promise((resolve) => setTimeout(resolve, 1000));
-        this.monitorProcessNetworkUsage();
-      }
-    });
-    this.networkUsageProcess = networkUsageProcess;
-  }
-
-  monitorProcessNetworkUsageLinux() {
-    const networkUsageProcess = spawn('unbuffer', ['nethogs', '-t', '-d', this.updateIntervalSeconds.toString()], {
-      windowsHide: true,
-      shell: false,
-    });
-    networkUsageProcess.stdout.on('data', (data) => {
-      const networkUsage = new Map();
-      data.toString('utf8').split('\n').forEach((line) => {
-        const match = nethogsRegex.exec(line);
-        if (!match) {
-          return;
-        }
-        const pid = parseInt(match[1], 10);
-        const bitrateOut = 8000 * parseInt(match[2], 10);
-        const bitrateIn = 8000 * parseInt(match[3], 10);
-        networkUsage.set(pid, { bitrateIn, bitrateOut });
-      });
-      this.networkUsage = networkUsage;
-      this.emit('networkUsage', networkUsage);
-    });
-    networkUsageProcess.stderr.on('data', (data) => {
-      data.toString('utf8').trim().split('\n').forEach((line) => logger.error(line.trim()));
-    });
-    networkUsageProcess.once('error', async (error) => {
-      logger.error(error.message);
-    });
-    networkUsageProcess.once('close', async (code) => {
-      if (code && code !== 0) {
-        logger.error(`Network usage process monitor exited with error code ${code}`);
-      }
-      if (!this.isShuttingDown) {
-        logger.error('Restarting network usage process');
-        await new Promise((resolve) => setTimeout(resolve, 1000));
-        this.monitorProcessNetworkUsage();
-      }
-    });
-    this.networkUsageProcess = networkUsageProcess;
   }
 
   async cleanupJob(id: string) {

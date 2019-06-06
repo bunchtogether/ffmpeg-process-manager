@@ -16,8 +16,6 @@ describe('FFmpeg Process Manager Process Management', () => {
     await processManagerB.init();
     const statusA = await waitForStatus(processManagerA, ffmpegJobId);
     expect(statusA).toEqual({
-      bitrateIn: expect.any(Number),
-      bitrateOut: expect.any(Number),
       cpu: expect.any(Number),
       memory: expect.any(Number),
       droppedFrames: expect.any(Number),
@@ -27,8 +25,6 @@ describe('FFmpeg Process Manager Process Management', () => {
     });
     const statusB = await waitForStatus(processManagerB, ffmpegJobId);
     expect(statusB).toEqual({
-      bitrateIn: expect.any(Number),
-      bitrateOut: expect.any(Number),
       cpu: expect.any(Number),
       memory: expect.any(Number),
       droppedFrames: expect.any(Number),
