@@ -123,7 +123,7 @@ class FFmpegProcessManager extends EventEmitter {
     for (const [pid, args] of processes) {
       const id = this.getId(args);
       if (map.get(id) !== pid) {
-        await killProcess(pid, 'redundant FFmpeg process');
+        await killProcess(pid, `redundant FFmpeg process ${id}`);
       }
     }
   }
@@ -555,37 +555,32 @@ class FFmpegProcessManager extends EventEmitter {
     const id = this.getId(args);
     const managedPid = this.ids.get(id);
     if (managedPid) {
-      logger.warn(`FFmpeg process ${managedPid} with ID ${id} is already running, skipping start`);
+      logger.debug(`FFmpeg process ${managedPid} with ID ${id} is already running, skipping start`);
       return [id, managedPid];
     }
-    if (!options.skipRestart) {
-      this.keepAlive.set(id, this.keepAlive.get(id) || { attempt: 0, args });
-    }
-    let existingPid;
-    let processIsUpdating;
     const processes = await this.getFFmpegProcesses();
     const stringifiedArgs = stringify(args);
+    let keepAliveData = this.keepAlive.get(id);
+    if (keepAliveData) {
+      keepAliveData.stop = true;
+      this.keepAlive.set(id, keepAliveData);
+    }
     for (const [ffmpegProcessId, ffmpegArgs] of processes) {
       if (stringify(ffmpegArgs) === stringifiedArgs) {
-        existingPid = ffmpegProcessId;
-        processIsUpdating = await this.checkIfProcessIsUpdating(args);
-        if (processIsUpdating) {
-          logger.info(`Found updating FFmpeg process ${existingPid} with ID ${id}`);
-        } else {
-          await killProcess(existingPid, 'non-updating FFmpeg');
-        }
-        break;
+        await killProcess(ffmpegProcessId, `pre-existing FFmpeg ${id}`);
+        await new Promise((resolve) => setTimeout(resolve, 3000));
       }
+    }
+    if (!options.skipRestart) {
+      keepAliveData = this.keepAlive.get(id) || { attempt: 0, args, stop: false };
+      keepAliveData.stop = false;
+      this.keepAlive.set(id, keepAliveData);
     }
     const progressOutputPath = this.getProgressOutputPath(args);
     const errorOutputPath = this.getErrorOutputPath(args);
     const stopWatchingProgressOutput = await this.startWatchingProgressOutput(id, progressOutputPath);
     const stopWatchingErrorOutput = await this.startWatchingErrorOutput(id, errorOutputPath);
-    const pid = existingPid && processIsUpdating ? existingPid : (await this.startProcess(args)).pid;
-    if (this.ids.get(id)) {
-      await killProcess(pid, 'FFmpeg process');
-      throw new Error(`Conflicting ID ${id} for FFmpeg process ${pid}`);
-    }
+    const pid = (await this.startProcess(args)).pid;
     this.pids.set(pid, id);
     this.ids.set(id, pid);
     const closeHandler = async () => {
@@ -628,8 +623,8 @@ class FFmpegProcessManager extends EventEmitter {
   async stop(id        ) {
     const keepAliveData = this.keepAlive.get(id);
     if (keepAliveData) {
-      const { attempt, args } = keepAliveData;
-      this.keepAlive.set(id, { attempt, args, stop: true });
+      keepAliveData.stop = true;
+      this.keepAlive.set(id, keepAliveData);
     }
     const processesBeforeClose = await this.getFFmpegProcesses();
     const pids = new Set();

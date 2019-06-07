@@ -15,9 +15,8 @@ module.exports = (func         ) => {
     promiseMap[cacheKey] = promise;
     promise.then(() => {
       delete promiseMap[cacheKey];
-    }).catch((error) => {
+    }).catch(() => {
       delete promiseMap[cacheKey];
-      throw error;
     });
     return promise;
   };
