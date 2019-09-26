@@ -64,7 +64,6 @@
     "json-stringify-deterministic": "^1.0.1",
     "logform": "^1.10.0",
     "murmurhash3js": "^3.0.1",
-    "node-object-hash": "^1.4.1",
     "pidusage": "^2.0.17",
     "ps-node": "^0.1.6",
     "terminate": "^2.1.2",

@@ -20,7 +20,6 @@ module.exports = async (pid:number, name:string) => {
     logger.info(`Stopped ${name} process ${pid} with SIGTERM`);
     return;
   } catch (error) {
-    console.log(error.code, error.status);
     logger.error(`Error with SIGTERM signal on ${name} process ${pid}: ${error.message}`);
   }
   try {
@@ -57,7 +56,6 @@ module.exports = async (pid:number, name:string) => {
     logger.info(`Stopped ${name} process ${pid} with SIGQUIT`);
     return;
   } catch (error) {
-    console.log(error.code, error.status);
     logger.error(`Error with SIGQUIT signal on ${name} process ${pid}: ${error.message}`);
   }
   throw new Error(`FFmpegProcessManager timed out when stopping ${name} process ${pid}`);

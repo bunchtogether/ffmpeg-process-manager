@@ -44,6 +44,13 @@ module.exports = (name: string) => {
       }),
     ],
   });
+  logger.errorStack = (error: Object) => {
+    if (error.stack) {
+      error.stack.split('\n').forEach((line) => logger.error(`\t${line}`));
+    } else {
+      logger.error(error.message);
+    }
+  };
   loggers[name] = logger;
   return logger;
 };
