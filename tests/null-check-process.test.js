@@ -6,8 +6,18 @@ const { FFmpegProcessManager, NullCheckFFmpegProcessError } = require('../src');
 jest.setTimeout(60000);
 
 describe('FFmpeg Process Manager Temporary Process', () => {
+  const processManager = new FFmpegProcessManager({ updateIntervalSeconds: 1 });
+
+  beforeAll(async () => {
+    await processManager.init();
+  });
+
+  afterAll(async () => {
+    await processManager.stopAll();
+    await processManager.shutdown();
+  });
+
   test('Should throw an error containing the exit code and stderr output', async () => {
-    const processManager = new FFmpegProcessManager({ updateIntervalSeconds: 1 });
     const args = [
       '-re',
       '-f', 'lavfi',
@@ -24,16 +34,14 @@ describe('FFmpeg Process Manager Temporary Process', () => {
         stderr: expect.arrayContaining([expect.stringContaining('badfilter')]),
       }));
     }
-    await processManager.shutdown();
   });
+
   test('Should resolve on successful execution', async () => {
-    const processManager = new FFmpegProcessManager({ updateIntervalSeconds: 1 });
     const args = [
       '-re',
       '-f', 'lavfi',
       '-i', 'testsrc=rate=30:size=1920x1080,format=yuv420p',
     ];
     await processManager.startNullCheck(args);
-    await processManager.shutdown();
   });
 });

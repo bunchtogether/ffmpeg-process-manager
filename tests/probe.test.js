@@ -8,15 +8,14 @@ jest.setTimeout(60000);
 
 describe('FFprobe', () => {
   const processManager = new FFmpegProcessManager({ updateIntervalSeconds: 1 });
-  let ffmpegJobId;
 
   beforeAll(async () => {
-    ffmpegJobId = (await processManager.start(testArgs))[0];
+    await processManager.start(testArgs);
   });
 
   afterAll(async () => {
     await shutdownFFprobe();
-    await processManager.stop(ffmpegJobId);
+    await processManager.stopAll();
     await processManager.shutdown();
   });
 

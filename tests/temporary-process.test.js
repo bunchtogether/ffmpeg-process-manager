@@ -22,8 +22,18 @@ const getFFmpegProcesses = ():Promise<Map<number, Array<string>>> => new Promise
 });
 
 describe('FFmpeg Process Manager Temporary Process', () => {
+  const processManager = new FFmpegProcessManager({ updateIntervalSeconds: 1 });
+
+  beforeAll(async () => {
+    await processManager.init();
+  });
+
+  afterAll(async () => {
+    await processManager.stopAll();
+    await processManager.shutdown();
+  });
+
   test('Should throw an error containing the exit code and stderr output', async () => {
-    const processManager = new FFmpegProcessManager({ updateIntervalSeconds: 1 });
     const args = [
       '-re',
       '-f', 'lavfi',
@@ -41,10 +51,8 @@ describe('FFmpeg Process Manager Temporary Process', () => {
         stderr: expect.arrayContaining([expect.stringContaining('badfilter')]),
       }));
     }
-    await processManager.shutdown();
   });
   test('Should resolve on successful execution', async () => {
-    const processManager = new FFmpegProcessManager({ updateIntervalSeconds: 1 });
     const args = [
       '-re',
       '-f', 'lavfi',
@@ -57,6 +65,5 @@ describe('FFmpeg Process Manager Temporary Process', () => {
     expect(allFFmpegProcesses.size).toEqual(1);
     expect(processes.size).toEqual(0);
     await temporaryProcessPromise;
-    await processManager.shutdown();
   });
 });

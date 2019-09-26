@@ -13,16 +13,8 @@ describe('FFmpeg Process Manager Process Management', () => {
     const processManagerA = new FFmpegProcessManager({ updateIntervalSeconds: 1 });
     const processManagerB = new FFmpegProcessManager({ updateIntervalSeconds: 1 });
     const [ffmpegJobId, ffmpegJobPid] = await processManagerA.start(testArgs); // eslint-disable-line no-unused-vars
+    await processManagerA.shutdown();
     await processManagerB.init();
-    const statusA = await waitForStatus(processManagerA, ffmpegJobId);
-    expect(statusA).toEqual({
-      cpu: expect.any(Number),
-      memory: expect.any(Number),
-      droppedFrames: expect.any(Number),
-      fps: expect.any(Number),
-      bitrate: expect.any(Number),
-      speed: expect.any(Number),
-    });
     const statusB = await waitForStatus(processManagerB, ffmpegJobId);
     expect(statusB).toEqual({
       cpu: expect.any(Number),
@@ -32,11 +24,9 @@ describe('FFmpeg Process Manager Process Management', () => {
       bitrate: expect.any(Number),
       speed: expect.any(Number),
     });
-    const closeAPromise = waitForClose(processManagerA, ffmpegJobId);
     const closeBPromise = waitForClose(processManagerB, ffmpegJobId);
-    await Promise.all([processManagerA.stop(ffmpegJobId), processManagerB.stop(ffmpegJobId)]);
-    await Promise.all([closeAPromise, closeBPromise]);
-    await processManagerA.shutdown();
+    await processManagerB.stop(ffmpegJobId);
+    await closeBPromise;
     await processManagerB.shutdown();
   });
   test('Should restart a stopped process', async () => {

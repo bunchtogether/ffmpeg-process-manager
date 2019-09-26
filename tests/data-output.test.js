@@ -14,6 +14,7 @@ describe('FFmpeg Process Manager Data Output', () => {
   });
 
   afterAll(async () => {
+    await processManager.stopAll();
     await processManager.shutdown();
   });
 
@@ -47,7 +48,7 @@ describe('FFmpeg Process Manager Data Output', () => {
     const progress = await new Promise((resolve, reject) => {
       const timeout = setTimeout(() => {
         reject(new Error('Timeout for FFmpeg process’s progress'));
-      }, 5000);
+      }, 10000);
       processManager.once('error', reject);
       processManager.once('progress', (id, data) => {
         if (id === ffmpegJobId) {
