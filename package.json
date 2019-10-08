@@ -1,6 +1,6 @@
 {
   "name": "@bunchtogether/ffmpeg-process-manager",
-  "version": "1.0.13",
+  "version": "1.0.14",
   "main": "dist/index.js",
   "repository": "https://github.com/bunchtogether/ffmpeg-process-manager.git",
   "author": "johnwehr@bunchtogether.com",

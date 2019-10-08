@@ -398,6 +398,15 @@ class FFmpegProcessManager extends EventEmitter {
       logger.debug(`FFmpeg process ${managedPid} with ID ${id} is already running, skipping start`);
       return [id, managedPid];
     }
+    const outputPath = args[args.length - 1];
+    if (outputPath.indexOf('/') !== -1) {
+      const outputDirectory = outputPath.split('/').slice(0, -1).join('/');
+      const exists = await fs.exists(outputDirectory);
+      if (!exists) {
+        logger.info(`Creating output directory ${outputDirectory}`);
+        await fs.ensureDir(outputDirectory);
+      }
+    }
     const processes = await this.getFFmpegProcesses();
     const stringifiedArgs = stringify(args);
     let keepAliveData = this.keepAlive.get(id);
