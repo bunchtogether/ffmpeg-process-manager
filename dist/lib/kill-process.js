@@ -1,6 +1,6 @@
 //      
 
-const terminate = require('terminate');
+const terminate = require('./terminate');
 const logger = require('./logger')('FFmpeg Process Manager');
 
 module.exports = async (pid       , name       ) => {

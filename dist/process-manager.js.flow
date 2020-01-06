@@ -17,7 +17,6 @@ const TemporaryFFmpegProcessError = require('./lib/temporary-ffmpeg-process-erro
 const NullCheckFFmpegProcessError = require('./lib/null-check-ffmpeg-process-error');
 const killProcess = require('./lib/kill-process');
 
-
 type OptionsType = {
   updateIntervalSeconds?: number,
   useSystemBinary?: boolean,
@@ -41,7 +40,7 @@ const getFFmpegPath = (useSystemBinary?: boolean) => {
 };
 
 class FFmpegProcessManager extends EventEmitter {
-  ready: Promise<void>;
+  ready: Promise<void> | void;
   outputPath: string;
   progress: Map<string, { fps: number, bitrate: number, speed: number }>;
   interval: IntervalID;
@@ -270,14 +269,19 @@ class FFmpegProcessManager extends EventEmitter {
     if (this.restartingProcesses.has(id)) {
       return;
     }
-    logger.warn(`Restarting process with ID ${id}`);
     this.restartingProcesses.add(id);
     const { attempt, args } = keepAliveData;
+    logger.warn(`Restarting process with ID ${id}, attempt ${attempt}`);
     this.keepAlive.set(id, { attempt: attempt + 1, args });
-    if (attempt < 6) {
+    if (attempt > 100) {
+      logger.warn(`Skipping restart of process with ID ${id} after 100 attempts`);
+      this.restartingProcesses.delete(id);
+      this.keepAlive.delete(id);
+      return;
+    } else if (attempt < 10) {
       await new Promise((resolve) => setTimeout(resolve, 1000 * attempt * attempt));
     } else {
-      await new Promise((resolve) => setTimeout(resolve, 1000 * 36));
+      await new Promise((resolve) => setTimeout(resolve, 1000 * 100));
     }
     this.restartingProcesses.delete(id);
     if (keepAliveData.stop) {
@@ -445,6 +449,8 @@ class FFmpegProcessManager extends EventEmitter {
         logger.error(`Unable to kill process ${id} with args ${args.join(' ')} after failed start`);
         logger.errorStack(error);
       }
+      logger.error(`Did not receive PID when starting process ${id} with args ${args.join(' ')}`);
+      process.exit(1);
       throw new Error(`Did not receive PID when starting process ${id} with args ${args.join(' ')}`);
     }
     this.pids.set(pid, id);
