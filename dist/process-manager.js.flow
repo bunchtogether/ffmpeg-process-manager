@@ -433,7 +433,7 @@ class FFmpegProcessManager extends EventEmitter {
     const mainProcess = spawn(this.ffmpegPath, combinedArgs, {
       windowsHide: true,
       shell: false,
-      detached: true,
+      detached: false,
     });
     mainProcess.once('close', async (code) => {
       if (code && code !== 255) {
@@ -469,12 +469,22 @@ class FFmpegProcessManager extends EventEmitter {
       speed: 0,
       progress: NaN,
     };
+    let progressTimeout;
+    const killAfterProgressTimeout = async () => {
+      logger.warn(`Killing FFmpeg process ${pid} with ID ${id}, no progress after 30s`);
+      try {
+        await killProcess(pid, 'Timed-Out FFmpeg');
+      } catch (error) {
+        logger.error(`Unable to kill process ${id} with args ${args.join(' ')} after progress timeout`);
+        logger.errorStack(error);
+      }
+    };
     const handleStdout = (buffer:Buffer) => {
       const data = {};
       buffer.toString('utf-8').trim().split('\n').forEach((line) => {
         const [key, value] = line.split('=');
         if (key && value) {
-          data[key.trim()] = parseInt(value.replace(/[^0-9.]/g, ''), 10);
+          data[key.trim()] = parseFloat(value.replace(/[^0-9.]/g, ''));
         }
       });
       const progress = {
@@ -486,6 +496,8 @@ class FFmpegProcessManager extends EventEmitter {
       previousData = data;
       this.emit('progress', id, progress);
       this.progress.set(id, progress);
+      clearTimeout(progressTimeout);
+      progressTimeout = setTimeout(killAfterProgressTimeout, 30000);
     };
     const handleStderr = (buffer:Buffer) => {
       const output = buffer.toString('utf-8').trim();
@@ -497,6 +509,7 @@ class FFmpegProcessManager extends EventEmitter {
     mainProcess.stdout.on('data', handleStdout);
     const shutdownHandler = async () => {
       try {
+        clearTimeout(progressTimeout);
         mainProcess.stderr.removeListener('data', handleStderr);
         mainProcess.stdout.removeListener('data', handleStdout);
         this.removeListener('close', closeHandler);
@@ -509,6 +522,7 @@ class FFmpegProcessManager extends EventEmitter {
     const closeHandler = async () => {
       this.shutdownHandlers.delete(id);
       try {
+        clearTimeout(progressTimeout);
         mainProcess.stderr.removeListener('data', handleStderr);
         mainProcess.stdout.removeListener('data', handleStdout);
         this.removeListener('close', closeHandler);
