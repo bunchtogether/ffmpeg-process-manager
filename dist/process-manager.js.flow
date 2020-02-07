@@ -488,7 +488,7 @@ class FFmpegProcessManager extends EventEmitter {
         }
       });
       const progress = {
-        droppedFrames: (isNaN(data.frame) || isNaN(previousData.frame) || isNaN(data.drop_frames) || isNaN(previousData.drop_frames)) ? 1 : (data.drop_frames - previousData.drop_frames) / (data.frame - previousData.frame),
+        droppedFrames: (isNaN(data.frame) || isNaN(previousData.frame) || isNaN(data.drop_frames) || isNaN(previousData.drop_frames) || data.frame - previousData.frame === 0) ? 1 : (data.drop_frames - previousData.drop_frames) / (data.frame - previousData.frame),
         fps: isNaN(data.fps) ? 0 : data.fps,
         bitrate: isNaN(data.bitrate) ? 0 : data.bitrate,
         speed: isNaN(data.speed) ? 0 : data.speed,
