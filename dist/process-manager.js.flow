@@ -1,21 +1,21 @@
 // @flow
 
+const colors = require('colors/safe');
 const { ffmpegPath } = require('@bunchtogether/ffmpeg-static');
 const { spawn } = require('child_process');
 const stringify = require('json-stringify-deterministic');
 const murmurHash3 = require('murmurhash3js');
-const fs = require('fs-extra');
-const path = require('path');
 const os = require('os');
 const EventEmitter = require('events');
-const { addShutdownHandler } = require('@bunchtogether/exit-handler');
 const ps = require('ps-node');
-const logger = require('./lib/logger')('FFmpeg Process Manager');
-const pidusage = require('pidusage');
+const makeLogger = require('./logger');
 const mergeAsyncCalls = require('./lib/merge-async-calls');
+const killProcess = require('./lib/kill-process');
+const pidusage = require('pidusage');
 const TemporaryFFmpegProcessError = require('./lib/temporary-ffmpeg-process-error');
 const NullCheckFFmpegProcessError = require('./lib/null-check-ffmpeg-process-error');
-const killProcess = require('./lib/kill-process');
+
+const logger = makeLogger('FFmpeg Process Manager');
 
 type OptionsType = {
   updateIntervalSeconds?: number,
@@ -24,7 +24,8 @@ type OptionsType = {
 
 type StartOptionsType = {
   skipInit?: boolean,
-  skipRestart?: boolean
+  skipRestart?: boolean,
+  beforeStart?: () => Promise<void>
 };
 
 const getFFmpegPath = (useSystemBinary?: boolean) => {
@@ -39,29 +40,42 @@ const getFFmpegPath = (useSystemBinary?: boolean) => {
   return ffmpegPath;
 };
 
+const logFFmpegArgs = (args) => {
+  logger.info(colors.grey('  ffmpeg \\'));
+  const items = (` ${args.join(' ')}`).split(/\s-(?![0-9]+)/);
+  items.forEach((line, index) => {
+    if (line.trim().length === 0) {
+      return;
+    }
+    if (index === items.length - 1) {
+      logger.info(colors.grey(`   -${line.trim()}`));
+    } else {
+      logger.info(colors.grey(`   -${line.trim()} \\`));
+    }
+  });
+};
+
+// const frameRegex = /frame=([0-9]+)/;
+
 class FFmpegProcessManager extends EventEmitter {
-  ready: Promise<void> | void;
-  outputPath: string;
+  ready: void | Promise<void>;
   progress: Map<string, { fps: number, bitrate: number, speed: number }>;
   interval: IntervalID;
-  updateIntervalSeconds: number;
-  useSystemBinary: boolean;
-  ffmpegPath: string;
   pids: Map<number, string>;
   ids: Map<string, number>;
-  tempPids: Set<number>;
-  keepAlive: Map<string, { attempt: number, args: Array<string>, stop?:boolean }>;
+  keepAlive: Map<string, { attempt: number, args: Array<string>, restartTime: number, beforeStart?: () => Promise<void> }>;
   isShuttingDown: boolean;
   platform: string;
-  closeHandlers: Map<string, Array<() => Promise<void> | void>>;
-  shutdownHandlers: Map<string, () => Promise<void> | void>;
   start: (Array<string>, ?StartOptionsType) => Promise<[string, number]>;
-  restartingProcesses:Set<string>;
+  stop: (string) => Promise<void>;
+  stopping: Set<string>;
+  updateIntervalSeconds: number;
+  useSystemBinary: boolean;
+  ffmpegPath:string;
 
-  constructor(options ?: OptionsType = {}) {
+  constructor(options:OptionsType) {
     super();
     this.isShuttingDown = false;
-    this.outputPath = path.resolve(path.join(os.tmpdir(), 'node-ffmpeg-process-manager'));
     this.progress = new Map();
     this.keepAlive = new Map();
     this.updateIntervalSeconds = options.updateIntervalSeconds || 10;
@@ -69,110 +83,71 @@ class FFmpegProcessManager extends EventEmitter {
     this.ffmpegPath = getFFmpegPath(this.useSystemBinary);
     this.pids = new Map();
     this.ids = new Map();
-    this.tempPids = new Set();
+    this.stopping = new Set();
     this.platform = os.platform();
-    this.closeHandlers = new Map();
-    this.shutdownHandlers = new Map();
-    this.restartingProcesses = new Set();
     this.start = mergeAsyncCalls(this._start.bind(this)); // eslint-disable-line  no-underscore-dangle
-    addShutdownHandler(this.shutdown.bind(this), (error: Error) => {
-      logger.error('Error during shutdown:');
-      logger.errorStack(error);
-    });
+    this.stop = mergeAsyncCalls(this._stop.bind(this)); // eslint-disable-line  no-underscore-dangle
   }
 
   init() {
     if (!this.ready) {
       this.ready = (async () => {
         this.isShuttingDown = false;
-        try {
-          await fs.ensureDir(this.outputPath);
-          await this.cleanupProcesses();
-          this.interval = setInterval(() => this.updateStatus(), this.updateIntervalSeconds * 1000);
-          const processes = await this.getFFmpegProcesses();
-          for (const [pid, args] of processes) {
-            logger.warn(`Found FFmpeg process ${pid} on init, starting with [${args.join(', ')}]`);
-            await this.start(args, { skipInit: true });
-          }
-        } catch (error) {
-          if (error.stack) {
-            logger.error('Unable to start ffmpeg-process-manager:');
-            error.stack.split('\n').forEach((line) => logger.error(`\t${line.trim()}`));
-          } else {
-            logger.error(`Unable to start ffmpeg-process-manager: ${error.message}`);
-          }
-          await new Promise((resolve) => setTimeout(resolve, 1000));
-          process.exit(1);
-        }
+        await this.stopAll();
+        this.interval = setInterval(() => this.updateStatus(), this.updateIntervalSeconds * 1000);
         logger.info('Initialized');
       })();
     }
     return this.ready;
   }
 
-  async cleanupProcesses() {
-    const processes = await this.getFFmpegProcesses();
-    const map = new Map();
-    for (const [pid, args] of processes) {
-      const id = this.getId(args);
-      map.set(id, pid);
-    }
-    for (const [pid, args] of processes) {
-      const id = this.getId(args);
-      if (map.get(id) !== pid) {
-        await killProcess(pid, `redundant FFmpeg process ${id}`);
-      }
-    }
-  }
-
   async stopAll() {
+    const stopPromises = [];
     for (const id of this.ids.keys()) {
-      try {
-        await this.stop(id);
-      } catch (error) {
-        logger.error(`Unable to stop FFmpeg process ${id}`);
-        logger.errorStack(error);
-      }
+      stopPromises.push(this.stop(id));
     }
+    await Promise.all(stopPromises);
+    const processes = await this.getFFmpegProcesses();
+    const pidsToKill = [...processes.keys()].map((pid) => [pid, 'FFmpeg process']);
+    await Promise.all(pidsToKill.map(async ([pid, name]) => killProcess(pid, name)));
   }
 
   async shutdown() {
     if (this.isShuttingDown) {
       return;
     }
-    for (const [id, shutdownHandler] of this.shutdownHandlers) {
-      try {
-        await shutdownHandler();
-      } catch (error) {
-        logger.error(`Unable to run shutdown handler for FFmpeg process ${id}`);
-        logger.errorStack(error);
-      }
-    }
     this.isShuttingDown = true;
     clearInterval(this.interval);
-    const pidsToKill = [...this.tempPids].map((pid) => [pid, 'temporary FFmpeg process']);
-    await Promise.all(pidsToKill.map(([pid, name]) => killProcess(pid, name)));
-    logger.info('Shut down');
+    await this.stopAll();
     delete this.ready;
     this.progress = new Map();
     this.keepAlive = new Map();
     this.pids = new Map();
     this.ids = new Map();
-    this.tempPids = new Set();
-    this.closeHandlers = new Map();
+    logger.info('Shut down');
+    this.isShuttingDown = false;
+  }
+
+  async getFFmpegProcesses(): Promise < Map < number, Array < string >>> {
+    return new Promise((resolve, reject) => {
+      ps.lookup({ command: 'ffmpeg' }, (error, resultList) => {
+        if (error) {
+          reject(error);
+        } else {
+          const processes = new Map();
+          resultList.forEach((result) => {
+            // Remove the "-v quiet -nostats -progress" args
+            if (result.arguments && result.arguments.indexOf('begin=1') !== -1) {
+              processes.set(parseInt(result.pid, 10), result.arguments.slice(5, -2));
+            }
+          });
+          resolve(processes);
+        }
+      });
+    });
   }
 
   async updateStatus() {
-    if (this.pids.size === 0) {
-      return;
-    }
-    const processes = await this.getFFmpegProcesses();
-    for (const [pid, id] of this.pids) {
-      if (!processes.has(pid)) {
-        logger.warn(`Process ${pid} with ID ${id} closed`);
-        await this.cleanupJob(id);
-      }
-    }
     if (this.pids.size === 0) {
       return;
     }
@@ -192,6 +167,281 @@ class FFmpegProcessManager extends EventEmitter {
       );
       this.emit('status', id, status);
     }
+  }
+
+  getId(args: Array<string>) {
+    const hashedId = murmurHash3.x64.hash128(stringify(args));
+    return `${hashedId.slice(0, 8)}-${hashedId.slice(8, 12)}-${hashedId.slice(12, 16)}-${hashedId.slice(16, 20)}-${hashedId.slice(20)}`;
+  }
+
+  async restart(id: string) {
+    if (this.isShuttingDown) {
+      logger.warn(`Skipping restart of process with ID ${id}: Shutting down`);
+      return;
+    }
+    if (this.stopping.has(id)) {
+      logger.warn(`Skipping restart of process with ID ${id}: Process stop was requested`);
+      return;
+    }
+    const keepAliveData = this.keepAlive.get(id);
+    if (!keepAliveData) {
+      this.stop(id);
+      return;
+    }
+    const { attempt, args, restartTime, beforeStart } = keepAliveData;
+    logger.warn(`Restarting process with ID ${id} after ${Math.round((Date.now() - restartTime) / 100) / 10} seconds of uptime`);
+    if (restartTime && (Date.now() - restartTime) > 120000) {
+      this.keepAlive.set(id, { attempt: 1, args, restartTime: Date.now(), beforeStart });
+    } else {
+      this.keepAlive.set(id, { attempt: attempt + 1, args, restartTime: Date.now(), beforeStart });
+    }
+    if (attempt > 5) {
+      await this.stop(id);
+      return;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 1000 * attempt * attempt));
+    if (this.isShuttingDown) {
+      logger.warn(`Skipping restart of process with ID ${id}: Shutting down`);
+      return;
+    }
+    if (this.stopping.has(id)) {
+      logger.warn(`Skipping restart of process with ID ${id}: Process stop was requested`);
+      return;
+    }
+    try {
+      await this.start(args, { beforeStart });
+      logger.warn(`Restarted process with ID ${id}`);
+    } catch (error) {
+      if (error.stack) {
+        logger.error(`Unable to restart process with ID ${id}:`);
+        error.stack.split('\n').forEach((line) => logger.error(`\t${line.trim()}`));
+      } else {
+        logger.error(`Unable to restart process with ID ${id}: ${error.message}`);
+      }
+      this.stop(id);
+    }
+  }
+
+  async startTemporary(args: Array < string >, duration:number) {
+    await this.init();
+    const combinedArgs = ['-v', 'error', '-nostats'].concat(args, ['-metadata', 'temporary=1']);
+    const ffmpegProcess = spawn(this.ffmpegPath, combinedArgs, {
+      windowsHide: true,
+      shell: true,
+      detached: false,
+    });
+    const pid = ffmpegProcess.pid;
+    if (typeof pid !== 'number') {
+      try {
+        ffmpegProcess.kill();
+      } catch (error) {
+        logger.error(`Unable to kill process with args ${combinedArgs.join(' ')} after failed start`);
+        logger.errorStack(error);
+      }
+      throw new Error(`Did not receive PID when starting process with args ${combinedArgs.join(' ')}`);
+    }
+    const processLogger = makeLogger(`FFmpeg Process ${pid}`);
+    logger.info(`Started FFmpeg temporary process ${pid}`);
+    logFFmpegArgs(combinedArgs);
+    const stderr = [];
+    ffmpegProcess.stderr.on('data', (data) => {
+      const message = data.toString('utf8').trim();
+      message.split('\n').forEach((line) => processLogger.error(line.trim()));
+      stderr.push(message);
+    });
+    ffmpegProcess.once('error', (error) => {
+      logger.error(error.message);
+    });
+    const timeout = setTimeout(() => {
+      killProcess(pid, 'temporary FFmpeg process');
+    }, duration);
+    await new Promise((resolve, reject) => {
+      ffmpegProcess.once('close', (code) => {
+        clearTimeout(timeout);
+        if (code && code !== 255) {
+          reject(new TemporaryFFmpegProcessError(`Temporary FFmpeg process ${ffmpegProcess.pid} exited with error code ${code}`, code, stderr));
+        } else {
+          resolve();
+        }
+      });
+    });
+  }
+
+  async startNullCheck(args: Array < string >) {
+    await this.init();
+    const combinedArgs = ['-v', 'error', '-nostats'].concat(args, ['-metadata', 'temporary=1', '-f', 'null', '-']);
+    const ffmpegProcess = spawn(this.ffmpegPath, combinedArgs, {
+      windowsHide: true,
+      shell: true,
+      detached: false,
+    });
+    const pid = ffmpegProcess.pid;
+    if (typeof pid !== 'number') {
+      try {
+        ffmpegProcess.kill();
+      } catch (error) {
+        logger.error(`Unable to kill process with args ${combinedArgs.join(' ')} after failed start`);
+        logger.errorStack(error);
+      }
+      throw new Error(`Did not receive PID when starting process with args ${combinedArgs.join(' ')}`);
+    }
+    const timeout = setTimeout(() => {
+      killProcess(ffmpegProcess.pid, 'null check FFmpeg process');
+    }, 5000);
+    const processLogger = makeLogger(`FFmpeg Process ${pid}`);
+    logger.info(`Started FFmpeg null check process ${pid}`);
+    logFFmpegArgs(combinedArgs);
+    const stderr = [];
+    let initialChange = true;
+    ffmpegProcess.stdout.on('data', () => {
+      if (initialChange) {
+        initialChange = false;
+        return;
+      }
+      killProcess(pid, 'null check FFmpeg process');
+    });
+    ffmpegProcess.stderr.on('data', (data) => {
+      const message = data.toString('utf8').trim();
+      message.split('\n').forEach((line) => processLogger.error(line.trim()));
+      stderr.push(message);
+    });
+    ffmpegProcess.once('error', (error) => {
+      logger.error(error.message);
+    });
+    await new Promise((resolve, reject) => {
+      ffmpegProcess.once('close', (code) => {
+        clearTimeout(timeout);
+        if (code && code !== 255) {
+          reject(new NullCheckFFmpegProcessError(`Null check FFmpeg process ${ffmpegProcess.pid} exited with error code ${code}`, code, stderr));
+        } else {
+          resolve();
+        }
+      });
+    });
+  }
+
+  async _start(args: Array < string >, options ?: StartOptionsType = {}) {
+    if (!options.skipInit) {
+      await this.init();
+    }
+    const id = this.getId(args);
+    const managedPid = this.ids.get(id);
+    if (managedPid) {
+      return [id, managedPid];
+    }
+    if (this.stopping.has(id)) {
+      logger.error(`FFmpeg process with ID ${id} is being stopped`);
+      throw new Error(`FFmpeg process with ID ${id} is being stopped`);
+    }
+    if (!options.skipRestart) {
+      this.keepAlive.set(id, this.keepAlive.get(id) || { attempt: 0, args, restartTime: Date.now(), beforeStart: options.beforeStart });
+    }
+    if (options.beforeStart) {
+      await options.beforeStart();
+    }
+    const combinedArgs = ['-v', 'error', '-nostats', '-progress', 'pipe:1'].concat(args, ['-metadata', 'begin=1']);
+    const ffmpegProcess = spawn(this.ffmpegPath, combinedArgs, {
+      windowsHide: true,
+      shell: true,
+      detached: false,
+    });
+    const pid = ffmpegProcess.pid;
+    if (typeof pid !== 'number') {
+      try {
+        ffmpegProcess.kill();
+      } catch (error) {
+        logger.error(`Unable to kill process with args ${combinedArgs.join(' ')} after failed start`);
+        logger.errorStack(error);
+      }
+      throw new Error(`Did not receive PID when starting process with args ${combinedArgs.join(' ')}`);
+    }
+    if (this.ids.get(id)) {
+      await killProcess(pid, 'FFmpeg');
+      throw new Error(`Conflicting ID ${id} for FFmpeg process ${pid}`);
+    }
+    this.pids.set(pid, id);
+    this.ids.set(id, pid);
+    ffmpegProcess.once('error', (error) => {
+      logger.error(error.message);
+    });
+    // let timeout;
+    ffmpegProcess.once('close', (code) => {
+      if (code && code !== 255) {
+        logger.error(`FFmpeg process ${ffmpegProcess.pid} with ID ${id} exited with error code ${code}`);
+      }
+      this.pids.delete(pid);
+      this.ids.delete(id);
+      this.emit('close', id);
+      this.restart(id);
+    });
+    const processLogger = makeLogger(`FFmpeg Process ${pid}`);
+    logger.info(`Started FFmpeg process ${ffmpegProcess.pid} with ID ${id}`);
+    logFFmpegArgs(combinedArgs);
+    ffmpegProcess.stderr.on('data', (data) => {
+      const message = data.toString('utf8').trim();
+      message.split('\n').forEach((line) => processLogger.error(line.trim()));
+      this.emit('stderr', id, message);
+    });
+    let previousData = {
+      frame: 0,
+      fps: 0,
+      stream_0_0_q: 0,
+      bitrate: 0,
+      total_size: 0,
+      out_time_us: 0,
+      out_time_ms: 0,
+      out_time: 0,
+      dup_frames: 0,
+      drop_frames: 0,
+      speed: 0,
+      progress: NaN,
+    };
+    ffmpegProcess.stdout.on('data', (buffer:Buffer) => {
+      const data = {};
+      buffer.toString('utf-8').trim().split('\n').forEach((line) => {
+        const [key, value] = line.split('=');
+        if (key && value) {
+          data[key.trim()] = parseFloat(value.replace(/[^0-9.]/g, ''));
+        }
+      });
+      const progress = {
+        droppedFrames: (isNaN(data.frame) || isNaN(previousData.frame) || isNaN(data.drop_frames) || isNaN(previousData.drop_frames) || data.frame - previousData.frame === 0) ? 1 : (data.drop_frames - previousData.drop_frames) / (data.frame - previousData.frame),
+        fps: isNaN(data.fps) ? 0 : data.fps,
+        bitrate: isNaN(data.bitrate) ? 0 : data.bitrate,
+        speed: isNaN(data.speed) ? 0 : data.speed,
+      };
+      previousData = data;
+      this.emit('progress', id, progress);
+      this.progress.set(id, progress);
+    });
+    return [id, pid];
+  }
+
+  async _stop(id: string) {
+    this.stopping.add(id);
+    try {
+      this.keepAlive.delete(id);
+      const processesBeforeClose = await this.getFFmpegProcesses();
+      const pids = new Set();
+      const mainPid = this.ids.get(id);
+      if (mainPid) {
+        pids.add(mainPid);
+      }
+      for (const [ffmpegProcessId, ffmpegArgs] of processesBeforeClose) {
+        if (id === this.getId(ffmpegArgs)) {
+          pids.add(ffmpegProcessId);
+        }
+      }
+      await Promise.all([...pids].map((pid) => killProcess(pid, 'FFmpeg')));
+    } catch (error) {
+      if (error.stack) {
+        logger.error(`Unable to stop FFmpeg processes with ID ${id}:`);
+        error.stack.split('\n').forEach((line) => logger.error(`\t${line.trim()}`));
+      } else {
+        logger.error(`Unable to stop FFmpeg processes with ID ${id}`);
+      }
+    }
+    this.stopping.delete(id);
   }
 
   getCpuAndMemoryUsage(pids: Array<number>): Promise < Map < number, { cpu: number, memory: number } >> {
@@ -221,362 +471,6 @@ class FFmpegProcessManager extends EventEmitter {
         }
       });
     });
-  }
-
-  getFFmpegProcesses(): Promise < Map < number, Array < string >>> {
-    return new Promise((resolve, reject) => {
-      ps.lookup({ command: this.ffmpegPath }, (error, resultList) => {
-        if (error) {
-          reject(error);
-        } else {
-          const processes = new Map();
-          resultList.forEach((result) => {
-          // Remove the "-v quiet -nostats -progress" args
-            if (result.arguments && result.arguments.indexOf('temporary_process="1"') === -1) {
-              processes.set(parseInt(result.pid, 10), result.arguments.slice(5));
-            }
-          });
-          resolve(processes);
-        }
-      });
-    });
-  }
-
-  async cleanupJob(id: string) {
-    const pid = this.ids.get(id);
-    if (!pid) {
-      return;
-    }
-    this.pids.delete(pid);
-    this.ids.delete(id);
-    await this.runCloseHandlers(id);
-  }
-
-  getId(args: Array<string>) {
-    const hashedId = murmurHash3.x64.hash128(stringify(args));
-    return `${hashedId.slice(0, 8)}-${hashedId.slice(8, 12)}-${hashedId.slice(12, 16)}-${hashedId.slice(16, 20)}-${hashedId.slice(20)}`;
-  }
-
-  async restart(id: string) {
-    const keepAliveData = this.keepAlive.get(id);
-    if (!keepAliveData) {
-      return;
-    }
-    if (keepAliveData.stop) {
-      this.keepAlive.delete(id);
-      return;
-    }
-    if (this.restartingProcesses.has(id)) {
-      return;
-    }
-    this.restartingProcesses.add(id);
-    const { attempt, args } = keepAliveData;
-    logger.warn(`Restarting process with ID ${id}, attempt ${attempt}`);
-    this.keepAlive.set(id, { attempt: attempt + 1, args });
-    if (attempt > 100) {
-      logger.warn(`Skipping restart of process with ID ${id} after 100 attempts`);
-      this.restartingProcesses.delete(id);
-      this.keepAlive.delete(id);
-      return;
-    } else if (attempt < 10) {
-      await new Promise((resolve) => setTimeout(resolve, 1000 * attempt * attempt));
-    } else {
-      await new Promise((resolve) => setTimeout(resolve, 1000 * 100));
-    }
-    this.restartingProcesses.delete(id);
-    if (keepAliveData.stop) {
-      this.keepAlive.delete(id);
-      return;
-    }
-    await this.start(args);
-    logger.warn(`Restarted process with ID ${id}`);
-  }
-
-  async startNullCheck(args: Array<string>): Promise < void> {
-    const duration = 5000;
-    const combinedArgs = ['-v', 'error', '-nostats', '-progress', 'pipe:1'].concat(args, ['-metadata', 'temporary_process="1"', '-f', 'null', '-']);
-    const mainProcess = spawn(this.ffmpegPath, combinedArgs, {
-      windowsHide: true,
-      shell: false,
-      detached: false,
-    });
-    this.tempPids.add(mainProcess.pid);
-    logger.info(`Started null check FFmpeg process ${mainProcess.pid} for ${duration}ms`);
-    return new Promise((resolve, reject) => {
-      let stderr = [];
-      const timeout = setTimeout(() => {
-        killProcess(mainProcess.pid, 'null check FFmpeg process');
-      }, duration);
-      let initialChange = true;
-      mainProcess.stdout.on('data', () => {
-        if (initialChange) {
-          initialChange = false;
-          return;
-        }
-        killProcess(mainProcess.pid, 'null check FFmpeg process');
-      });
-      mainProcess.stderr.on('data', (data) => {
-        const message = data.toString('utf8').trim().split('\n').map((line) => line.trim());
-        message.forEach((line) => logger.error(`\t${line.trim()}`));
-        stderr = stderr.concat(message);
-      });
-      mainProcess.once('error', async (error) => {
-        clearTimeout(timeout);
-        reject(error);
-      });
-      mainProcess.once('close', async (code) => {
-        clearTimeout(timeout);
-        this.tempPids.delete(mainProcess.pid);
-        if (code && code !== 255) {
-          const message = `Null check FFmpeg process ${mainProcess.pid} exited with error code ${code}`;
-          logger.error(message);
-          logger.error(`\tArguments: ${args.join(' ')}`);
-          reject(new NullCheckFFmpegProcessError(message, code, stderr));
-        } else if (stderr.length > 0) {
-          const message = `Null check FFmpeg process ${mainProcess.pid} exited with error code ${code} but contained errors`;
-          logger.error(message);
-          logger.error(`\tArguments: ${args.join(' ')}`);
-          reject(new NullCheckFFmpegProcessError(message, code, stderr));
-        } else {
-          resolve();
-        }
-      });
-    });
-  }
-
-  async startTemporary(args: Array < string >, duration: number): Promise < void> {
-    const combinedArgs = ['-v', 'error', '-nostats'].concat(args, ['-metadata', 'temporary_process="1"']);
-    const mainProcess = spawn(this.ffmpegPath, combinedArgs, {
-      windowsHide: true,
-      shell: false,
-      detached: false,
-    });
-    this.tempPids.add(mainProcess.pid);
-    logger.info(`Started temporary FFmpeg process ${mainProcess.pid} for ${duration}ms`);
-    const promise = new Promise((resolve, reject) => {
-      let stderr = [];
-      const timeout = setTimeout(() => {
-        killProcess(mainProcess.pid, 'temporary FFmpeg process');
-      }, duration);
-      mainProcess.stderr.on('data', (data) => {
-        const message = data.toString('utf8').trim().split('\n').map((line) => line.trim());
-        message.forEach((line) => logger.error(`\t${line.trim()}`));
-        stderr = stderr.concat(message);
-      });
-      mainProcess.once('error', async (error) => {
-        clearTimeout(timeout);
-        reject(error);
-      });
-      mainProcess.once('close', async (code) => {
-        clearTimeout(timeout);
-        if (code && code !== 255) {
-          const message = `Temporary FFmpeg process ${mainProcess.pid} exited with error code ${code}`;
-          logger.error(message);
-          logger.error(`\tArguments: ${args.join(' ')}`);
-          reject(new TemporaryFFmpegProcessError(message, code, stderr));
-        } else if (stderr.length > 0) {
-          const message = `Temporary FFmpeg process ${mainProcess.pid} exited with error code ${code} but contained errors`;
-          logger.error(message);
-          logger.error(`\tArguments: ${args.join(' ')}`);
-          reject(new TemporaryFFmpegProcessError(message, code, stderr));
-        } else {
-          resolve();
-        }
-      });
-    });
-    promise.then(() => {
-      this.tempPids.delete(mainProcess.pid);
-    }).catch(() => {
-      this.tempPids.delete(mainProcess.pid);
-    });
-    return promise;
-  }
-
-  async _start(args: Array < string >, options ?: StartOptionsType = {}) {
-    if (!options.skipInit) {
-      await this.init();
-    }
-    const id = this.getId(args);
-    const managedPid = this.ids.get(id);
-    if (managedPid) {
-      logger.debug(`FFmpeg process ${managedPid} with ID ${id} is already running, skipping start`);
-      return [id, managedPid];
-    }
-    const outputPath = args[args.length - 1];
-    if (outputPath.indexOf('/') !== -1) {
-      const outputDirectory = outputPath.split('/').slice(0, -1).join('/');
-      const exists = await fs.exists(outputDirectory);
-      if (!exists) {
-        logger.info(`Creating output directory ${outputDirectory}`);
-        await fs.ensureDir(outputDirectory);
-      }
-    }
-    const processes = await this.getFFmpegProcesses();
-    const stringifiedArgs = stringify(args);
-    let keepAliveData = this.keepAlive.get(id);
-    if (keepAliveData) {
-      keepAliveData.stop = true;
-      this.keepAlive.set(id, keepAliveData);
-    }
-    for (const [ffmpegProcessId, ffmpegArgs] of processes) {
-      if (stringify(ffmpegArgs) === stringifiedArgs) {
-        await killProcess(ffmpegProcessId, `pre-existing FFmpeg ${id}`);
-        await new Promise((resolve) => setTimeout(resolve, 3000));
-      }
-    }
-    if (!options.skipRestart) {
-      keepAliveData = this.keepAlive.get(id) || { attempt: 0, args, stop: false };
-      keepAliveData.stop = false;
-      this.keepAlive.set(id, keepAliveData);
-    }
-    const combinedArgs = ['-v', 'error', '-nostats', '-progress', 'pipe:1'].concat(args);
-    const mainProcess = spawn(this.ffmpegPath, combinedArgs, {
-      windowsHide: true,
-      shell: false,
-      detached: false,
-    });
-    mainProcess.once('close', async (code) => {
-      if (code && code !== 255) {
-        logger.error(`FFmpeg process ${mainProcess.pid} with ID ${id} exited with error code ${code}`);
-      }
-    });
-    logger.info(`Started FFmpeg process ${mainProcess.pid} with ID ${id}`);
-    const pid = mainProcess.pid;
-    if (typeof pid !== 'number') {
-      try {
-        mainProcess.kill();
-      } catch (error) {
-        logger.error(`Unable to kill process ${id} with args ${args.join(' ')} after failed start`);
-        logger.errorStack(error);
-      }
-      logger.error(`Did not receive PID when starting process ${id} with args ${args.join(' ')}`);
-      process.exit(1);
-      throw new Error(`Did not receive PID when starting process ${id} with args ${args.join(' ')}`);
-    }
-    this.pids.set(pid, id);
-    this.ids.set(id, pid);
-    let previousData = {
-      frame: 0,
-      fps: 0,
-      stream_0_0_q: 0,
-      bitrate: 0,
-      total_size: 0,
-      out_time_us: 0,
-      out_time_ms: 0,
-      out_time: 0,
-      dup_frames: 0,
-      drop_frames: 0,
-      speed: 0,
-      progress: NaN,
-    };
-    let progressTimeout;
-    const killAfterProgressTimeout = async () => {
-      logger.warn(`Killing FFmpeg process ${pid} with ID ${id}, no progress after 30s`);
-      try {
-        await killProcess(pid, 'Timed-Out FFmpeg');
-      } catch (error) {
-        logger.error(`Unable to kill process ${id} with args ${args.join(' ')} after progress timeout`);
-        logger.errorStack(error);
-      }
-    };
-    const handleStdout = (buffer:Buffer) => {
-      const data = {};
-      buffer.toString('utf-8').trim().split('\n').forEach((line) => {
-        const [key, value] = line.split('=');
-        if (key && value) {
-          data[key.trim()] = parseFloat(value.replace(/[^0-9.]/g, ''));
-        }
-      });
-      const progress = {
-        droppedFrames: (isNaN(data.frame) || isNaN(previousData.frame) || isNaN(data.drop_frames) || isNaN(previousData.drop_frames) || data.frame - previousData.frame === 0) ? 1 : (data.drop_frames - previousData.drop_frames) / (data.frame - previousData.frame),
-        fps: isNaN(data.fps) ? 0 : data.fps,
-        bitrate: isNaN(data.bitrate) ? 0 : data.bitrate,
-        speed: isNaN(data.speed) ? 0 : data.speed,
-      };
-      previousData = data;
-      this.emit('progress', id, progress);
-      this.progress.set(id, progress);
-      clearTimeout(progressTimeout);
-      progressTimeout = setTimeout(killAfterProgressTimeout, 30000);
-    };
-    const handleStderr = (buffer:Buffer) => {
-      const output = buffer.toString('utf-8').trim();
-      logger.error(`FFmpeg process ${pid} with ID ${id}:`);
-      output.split('\n').forEach((line) => logger.error(`\t${line.trim()}`));
-      this.emit('stderr', id, output);
-    };
-    mainProcess.stderr.on('data', handleStderr);
-    mainProcess.stdout.on('data', handleStdout);
-    const shutdownHandler = async () => {
-      try {
-        clearTimeout(progressTimeout);
-        mainProcess.stderr.removeListener('data', handleStderr);
-        mainProcess.stdout.removeListener('data', handleStdout);
-        this.removeListener('close', closeHandler);
-      } catch (error) {
-        logger.error(`Unable to run shutdown handler for FFmpeg process ${pid} with ID ${id}`);
-        logger.errorStack(error);
-      }
-    };
-    this.shutdownHandlers.set(id, shutdownHandler);
-    const closeHandler = async () => {
-      this.shutdownHandlers.delete(id);
-      try {
-        clearTimeout(progressTimeout);
-        mainProcess.stderr.removeListener('data', handleStderr);
-        mainProcess.stdout.removeListener('data', handleStdout);
-        this.removeListener('close', closeHandler);
-        this.restart(id);
-      } catch (error) {
-        if (error.stack) {
-          logger.error(`Unable to close FFmpeg process ${pid} with ID ${id}:`);
-          error.stack.split('\n').forEach((line) => logger.error(`\t${line.trim()}`));
-        } else {
-          logger.error(`Unable to close FFmpeg process ${pid} with ID ${id}:' ${error.message}`);
-        }
-      }
-    };
-    this.addCloseHandler(id, closeHandler);
-    return [id, pid];
-  }
-
-  async runCloseHandlers(id: string) {
-    const handlers = this.closeHandlers.get(id);
-    if (!handlers) {
-      return;
-    }
-    for (const handler of handlers) {
-      await handler();
-    }
-    this.closeHandlers.delete(id);
-    this.emit('close', id);
-  }
-
-  addCloseHandler(id: string, handler: () => Promise<void> | void) {
-    const handlers = this.closeHandlers.get(id) || [];
-    handlers.push(handler);
-    this.closeHandlers.set(id, handlers);
-  }
-
-  async stop(id: string) {
-    const keepAliveData = this.keepAlive.get(id);
-    if (keepAliveData) {
-      keepAliveData.stop = true;
-      this.keepAlive.set(id, keepAliveData);
-    }
-    const processesBeforeClose = await this.getFFmpegProcesses();
-    const pids = new Set();
-    const mainPid = this.ids.get(id);
-    if (mainPid) {
-      pids.add(mainPid);
-    }
-    for (const [ffmpegProcessId, ffmpegArgs] of processesBeforeClose) {
-      if (id === this.getId(ffmpegArgs)) {
-        pids.add(ffmpegProcessId);
-      }
-    }
-    await Promise.all([...pids].map((pid) => killProcess(pid, 'FFmpeg')));
-    await this.cleanupJob(id);
   }
 }
 

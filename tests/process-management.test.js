@@ -9,7 +9,7 @@ const testArgs = require('./lib/test-args');
 jest.setTimeout(60000);
 
 describe('FFmpeg Process Manager Process Management', () => {
-  test('Should attach to existing processes', async () => {
+  test.skip('Should attach to existing processes', async () => {
     const processManagerA = new FFmpegProcessManager({ updateIntervalSeconds: 1 });
     const processManagerB = new FFmpegProcessManager({ updateIntervalSeconds: 1 });
     const [ffmpegJobId, ffmpegJobPid] = await processManagerA.start(testArgs); // eslint-disable-line no-unused-vars

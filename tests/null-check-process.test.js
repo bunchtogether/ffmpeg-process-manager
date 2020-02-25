@@ -5,7 +5,7 @@ const { FFmpegProcessManager, NullCheckFFmpegProcessError } = require('../src');
 
 jest.setTimeout(60000);
 
-describe('FFmpeg Process Manager Temporary Process', () => {
+describe('FFmpeg Process Manager Null Check Process', () => {
   const processManager = new FFmpegProcessManager({ updateIntervalSeconds: 1 });
 
   beforeAll(async () => {

@@ -60,6 +60,7 @@ describe('FFmpeg Process Manager Temporary Process', () => {
       '-f', 'null', '-',
     ];
     const temporaryProcessPromise = processManager.startTemporary(args, 2000);
+    await new Promise((resolve) => setTimeout(resolve, 250));
     const allFFmpegProcesses = await getFFmpegProcesses();
     const processes = await processManager.getFFmpegProcesses();
     expect(allFFmpegProcesses.size).toEqual(1);
