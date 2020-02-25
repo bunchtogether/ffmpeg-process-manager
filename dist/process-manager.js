@@ -227,7 +227,7 @@ class FFmpegProcessManager extends EventEmitter {
     const combinedArgs = ['-v', 'error', '-nostats'].concat(args, ['-metadata', 'temporary=1']);
     const ffmpegProcess = spawn(this.ffmpegPath, combinedArgs, {
       windowsHide: true,
-      shell: true,
+      shell: false,
       detached: false,
     });
     const pid = ffmpegProcess.pid;
@@ -272,7 +272,7 @@ class FFmpegProcessManager extends EventEmitter {
     const combinedArgs = ['-v', 'error', '-nostats'].concat(args, ['-metadata', 'temporary=1', '-f', 'null', '-']);
     const ffmpegProcess = spawn(this.ffmpegPath, combinedArgs, {
       windowsHide: true,
-      shell: true,
+      shell: false,
       detached: false,
     });
     const pid = ffmpegProcess.pid;
@@ -342,7 +342,7 @@ class FFmpegProcessManager extends EventEmitter {
     const combinedArgs = ['-v', 'error', '-nostats', '-progress', 'pipe:1'].concat(args, ['-metadata', 'begin=1']);
     const ffmpegProcess = spawn(this.ffmpegPath, combinedArgs, {
       windowsHide: true,
-      shell: true,
+      shell: false,
       detached: false,
     });
     const pid = ffmpegProcess.pid;
