@@ -18,9 +18,7 @@
   },
   "pre-commit": [
     "lint",
-    "start-pre-commit",
-    "build",
-    "end-pre-commit"
+    "build"
   ],
   "jest": {
     "coverageDirectory": "./coverage/",
@@ -66,7 +64,7 @@
     "logform": "^2.1.2",
     "murmurhash3js": "^3.0.1",
     "pidusage": "^2.0.17",
-    "ps-node": "^0.1.6",
+    "ps-list": "^7.0.0",
     "terminate": "^2.1.2",
     "winston": "^3.2.1"
   }

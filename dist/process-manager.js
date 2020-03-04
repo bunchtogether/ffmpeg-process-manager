@@ -7,7 +7,7 @@ const stringify = require('json-stringify-deterministic');
 const murmurHash3 = require('murmurhash3js');
 const os = require('os');
 const EventEmitter = require('events');
-const ps = require('ps-node');
+const psList = require('ps-list');
 const makeLogger = require('./logger');
 const mergeAsyncCalls = require('./lib/merge-async-calls');
 const killProcess = require('./lib/kill-process');
@@ -128,23 +128,34 @@ class FFmpegProcessManager extends EventEmitter {
     this.isShuttingDown = false;
   }
 
-  async getFFmpegProcesses()                                             {
-    return new Promise((resolve, reject) => {
-      ps.lookup({ command: 'ffmpeg' }, (error, resultList) => {
-        if (error) {
-          reject(error);
-        } else {
-          const processes = new Map();
-          resultList.forEach((result) => {
-            // Remove the "-v quiet -nostats -progress" args
-            if (result.arguments && result.arguments.indexOf('begin=1') !== -1) {
-              processes.set(parseInt(result.pid, 10), result.arguments.slice(5, -2));
-            }
-          });
-          resolve(processes);
-        }
-      });
+  // async getFFmpegProcesses2(): Promise < Map < number, Array < string >>> {
+  //   return new Promise((resolve, reject) => {
+  //     ps.lookup({ command: 'ffmpeg' }, (error, resultList) => {
+  //       if (error) {
+  //         reject(error);
+  //       } else {
+  //         const processes = new Map();
+  //         resultList.forEach((result) => {
+  //           // Remove the "-v quiet -nostats -progress" args
+  //           if (result.arguments && result.arguments.indexOf('begin=1') !== -1) {
+  //             processes.set(parseInt(result.pid, 10), result.arguments.slice(5, -2));
+  //           }
+  //         });
+  //         resolve(processes);
+  //       }
+  //     });
+  //   });
+  // }
+
+  async getFFmpegProcesses()                                        {
+    const allProcesses = await psList();
+    const processes = new Map();
+    allProcesses.forEach((result) => {
+      if (result.cmd && result.cmd.includes(this.ffmpegPath) && result.cmd.includes('begin=1')) {
+        processes.set(result.pid, result.cmd.split(' ').slice(6, -2));
+      }
     });
+    return processes;
   }
 
   async updateStatus() {
