@@ -1,6 +1,6 @@
 {
   "name": "@bunchtogether/ffmpeg-process-manager",
-  "version": "1.0.19",
+  "version": "1.0.20",
   "main": "dist/index.js",
   "repository": "https://github.com/bunchtogether/ffmpeg-process-manager.git",
   "author": "johnwehr@bunchtogether.com",
@@ -16,12 +16,11 @@
     "start-pre-commit": "git stash -q --keep-index",
     "end-pre-commit": "git add -u && git stash pop -q"
   },
-  "pre-commit": [
-    "lint",
-    "start-pre-commit",
-    "build",
-    "end-pre-commit"
-  ],
+  "husky": {
+    "hooks": {
+      "pre-commit": "yarn lint && yarn build && git add dist ./README.md"
+    }
+  },
   "jest": {
     "coverageDirectory": "./coverage/",
     "collectCoverage": true,
@@ -50,6 +49,7 @@
     "flow-copy-source": "^2.0.9",
     "flow-remove-types": "^2.115.0",
     "flow-typed": "^2.6.2",
+    "husky": "^4.3.8",
     "jest": "^24.9.0",
     "jest-flow-transform": "^1.0.1",
     "pre-commit": "^1.2.2"
@@ -65,6 +65,7 @@
     "json-stringify-deterministic": "^1.0.1",
     "logform": "^2.1.2",
     "murmurhash3js": "^3.0.1",
+    "p-queue": "^6.6.2",
     "pidusage": "^2.0.17",
     "ps-node": "^0.1.6",
     "terminate": "^2.1.2",

@@ -14,6 +14,7 @@ const killProcess = require('./lib/kill-process');
 const pidusage = require('pidusage');
 const TemporaryFFmpegProcessError = require('./lib/temporary-ffmpeg-process-error');
 const NullCheckFFmpegProcessError = require('./lib/null-check-ffmpeg-process-error');
+const { default: PQueue } = require('p-queue');
 
 const logger = makeLogger('FFmpeg Process Manager');
 
@@ -72,6 +73,7 @@ class FFmpegProcessManager extends EventEmitter {
   updateIntervalSeconds: number;
   useSystemBinary: boolean;
   ffmpegPath:string;
+  queue: PQueue;
 
   constructor(options:OptionsType) {
     super();
@@ -85,8 +87,8 @@ class FFmpegProcessManager extends EventEmitter {
     this.ids = new Map();
     this.stopping = new Set();
     this.platform = os.platform();
-    this.start = mergeAsyncCalls(this._start.bind(this)); // eslint-disable-line  no-underscore-dangle
-    this.stop = mergeAsyncCalls(this._stop.bind(this)); // eslint-disable-line  no-underscore-dangle
+    this.queue = new PQueue();
+    this.start = mergeAsyncCalls((args: Array < string >, opts ?: StartOptionsType = {}) => this.queue.add(() => this._start(args, opts))); // eslint-disable-line no-underscore-dangle
   }
 
   init() {
@@ -118,6 +120,7 @@ class FFmpegProcessManager extends EventEmitter {
     }
     this.isShuttingDown = true;
     clearInterval(this.interval);
+    await this.queue.onIdle();
     await this.stopAll();
     delete this.ready;
     this.progress = new Map();
@@ -174,7 +177,11 @@ class FFmpegProcessManager extends EventEmitter {
     return `${hashedId.slice(0, 8)}-${hashedId.slice(8, 12)}-${hashedId.slice(12, 16)}-${hashedId.slice(16, 20)}-${hashedId.slice(20)}`;
   }
 
-  async restart(id: string) {
+  restart(id: string) {
+    return this.queue.add(() => this._restart(id)); // eslint-disable-line no-underscore-dangle
+  }
+
+  async _restart(id: string) {
     if (this.isShuttingDown) {
       logger.warn(`Skipping restart of process with ID ${id}: Shutting down`);
       return;
@@ -417,8 +424,9 @@ class FFmpegProcessManager extends EventEmitter {
     return [id, pid];
   }
 
-  async _stop(id: string) {
+  async stop(id: string) {
     this.stopping.add(id);
+    await this.queue.onIdle();
     try {
       this.keepAlive.delete(id);
       const processesBeforeClose = await this.getFFmpegProcesses();
@@ -441,6 +449,7 @@ class FFmpegProcessManager extends EventEmitter {
         logger.error(`Unable to stop FFmpeg processes with ID ${id}`);
       }
     }
+    await this.queue.onIdle();
     this.stopping.delete(id);
   }
 
