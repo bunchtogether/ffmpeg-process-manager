@@ -2,24 +2,21 @@
 
 const expect = require('expect');
 const { ffmpegPath } = require('@bunchtogether/ffmpeg-static');
-const ps = require('ps-node');
+const psList = require('ps-list');
 const { FFmpegProcessManager, TemporaryFFmpegProcessError } = require('../src');
 
 jest.setTimeout(60000);
 
-const getFFmpegProcesses = ():Promise<Map<number, Array<string>>> => new Promise((resolve, reject) => {
-  ps.lookup({ command: ffmpegPath }, (error, resultList) => {
-    if (error) {
-      reject(error);
-    } else {
-      const processes = new Map();
-      resultList.forEach((result) => {
-        processes.set(parseInt(result.pid, 10), result.arguments);
-      });
-      resolve(processes);
+const getFFmpegProcesses = async ():Promise<Map<number, Array<string>>> => {
+  const allProcesses = await psList();
+  const processes = new Map();
+  allProcesses.forEach((result) => {
+    if (result.cmd && result.cmd.includes(ffmpegPath)) {
+      processes.set(result.pid, result.cmd.split(' ').slice(1));
     }
   });
-});
+  return processes;
+};
 
 describe('FFmpeg Process Manager Temporary Process', () => {
   const processManager = new FFmpegProcessManager({ updateIntervalSeconds: 1 });
